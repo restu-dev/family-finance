@@ -1,0 +1,16 @@
+{
+  "name": "family-finance",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Aplikasi manajemen keuangan keluarga (Firebase + Vercel)",
+  "scripts": {
+    "build": "node scripts/build-config.mjs",
+    "config:local": "node --env-file=.env scripts/build-config.mjs",
+    "start": "npx serve . -l 3000",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check-imports.mjs",
+    "test:integration": "node --import ./tests/register.mjs --test tests/integration/ledger.test.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

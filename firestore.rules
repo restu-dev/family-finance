@@ -1,0 +1,340 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =====================================================================
+    // Helper
+    // =====================================================================
+    function signedIn() { return request.auth != null; }
+    function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
+    function famPath(fid) { return /databases/$(database)/documents/families/$(fid); }
+    function memberPath(fid, uid) { return /databases/$(database)/documents/families/$(fid)/members/$(uid); }
+    function invitePath(code) { return /databases/$(database)/documents/invites/$(code); }
+    function catPath(fid, id) { return /databases/$(database)/documents/families/$(fid)/categories/$(id); }
+    function goalPath(fid, id) { return /databases/$(database)/documents/families/$(fid)/savingsGoals/$(id); }
+
+    function isMember(fid) {
+      return signedIn()
+        && exists(memberPath(fid, request.auth.uid))
+        && get(memberPath(fid, request.auth.uid)).data.status == 'active';
+    }
+    function isOwner(fid) {
+      return isMember(fid) && get(famPath(fid)).data.ownerUid == request.auth.uid;
+    }
+    // Nama pelaku diambil dari dokumen anggota (bukan teks bebas dari browser).
+    function memberName(fid) { return get(memberPath(fid, request.auth.uid)).data.displayName; }
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+    function isDateStr(s) { return s is string && s.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function isMonthStr(s) { return s is string && s.matches('^[0-9]{4}-[0-9]{2}$'); }
+    function isMoney(n) { return n is int && n > 0 && n <= 1000000000000; }
+    // ID yang disisipkan ke path wajib aman (tanpa garis miring) agar tidak bisa menyusup ke dokumen lain.
+    function safeId(s) { return s is string && s.matches('^[A-Za-z0-9_-]{1,64}$'); }
+    function shortText(s, max) { return s is string && s.size() >= 1 && s.size() <= max; }
+
+    // =====================================================================
+    // Profil pengguna
+    // =====================================================================
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'familyId', 'createdAt'])
+        && shortText(request.resource.data.displayName, 60)
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.familyId == null
+        && request.resource.data.createdAt == request.time;
+      // familyId hanya boleh diisi sekali, dan hanya jika keanggotaannya dibuat pada batch yang sama.
+      allow update: if signedIn() && request.auth.uid == uid
+        && changedOnly(['familyId'])
+        && resource.data.familyId == null
+        && safeId(request.resource.data.familyId)
+        && existsAfter(memberPath(request.resource.data.familyId, uid));
+      allow delete: if false;
+    }
+
+    // =====================================================================
+    // Keluarga
+    // =====================================================================
+    match /families/{familyId} {
+      allow read: if isMember(familyId);
+
+      allow create: if signedIn()
+        && get(userPath(request.auth.uid)).data.familyId == null
+        && request.resource.data.keys().hasOnly(
+             ['name', 'currency', 'timezone', 'ownerUid', 'inviteCode', 'memberCount', 'createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && shortText(request.resource.data.name, 60)
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.currency == 'IDR'
+        && request.resource.data.timezone == 'Asia/Jakarta'
+        && request.resource.data.memberCount == 1
+        && request.resource.data.inviteCode is string
+        && request.resource.data.inviteCode.matches('^[A-Z0-9]{8}$')
+        && request.resource.data.createdAt == request.time
+        && existsAfter(memberPath(familyId, request.auth.uid));
+
+      allow update: if (
+          isOwner(familyId)
+          && changedOnly(['name', 'inviteCode'])
+          && shortText(request.resource.data.name, 60)
+          && request.resource.data.name.size() >= 2
+          && request.resource.data.inviteCode is string
+          && request.resource.data.inviteCode.matches('^[A-Z0-9]{8}$')
+        ) || (
+          // Pasangan bergabung: hanya menaikkan memberCount dari 1 ke 2 (batas dua anggota).
+          signedIn()
+          && !exists(memberPath(familyId, request.auth.uid))
+          && changedOnly(['memberCount'])
+          && resource.data.memberCount == 1
+          && request.resource.data.memberCount == 2
+          && existsAfter(memberPath(familyId, request.auth.uid))
+          && getAfter(memberPath(familyId, request.auth.uid)).data.role == 'member'
+        );
+      allow delete: if false;
+
+      // ---------- Anggota ----------
+      match /members/{memberUid} {
+        allow read: if isMember(familyId);
+        allow create: if signedIn() && request.auth.uid == memberUid
+          && request.resource.data.keys().hasOnly(
+               ['uid', 'displayName', 'role', 'status', 'joinedAt', 'inviteCode'])
+          && request.resource.data.uid == memberUid
+          && request.resource.data.status == 'active'
+          && request.resource.data.joinedAt == request.time
+          && request.resource.data.displayName == get(userPath(memberUid)).data.displayName
+          && get(userPath(memberUid)).data.familyId == null
+          && (
+            (request.resource.data.role == 'owner'
+              && !exists(famPath(familyId))
+              && getAfter(famPath(familyId)).data.ownerUid == memberUid)
+            ||
+            (request.resource.data.role == 'member'
+              && request.resource.data.inviteCode is string
+              && request.resource.data.inviteCode.matches('^[A-Z0-9]{8}$')
+              && get(invitePath(request.resource.data.inviteCode)).data.familyId == familyId
+              && get(invitePath(request.resource.data.inviteCode)).data.active == true
+              && get(famPath(familyId)).data.memberCount == 1
+              && getAfter(famPath(familyId)).data.memberCount == 2)
+          );
+        allow update, delete: if false; // role tidak dapat diubah
+      }
+
+      // ---------- Kategori ----------
+      match /categories/{categoryId} {
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(['type', 'name', 'isActive', 'isDefault', 'createdAt', 'updatedAt'])
+          && request.resource.data.type in ['income', 'expense']
+          && shortText(request.resource.data.name, 40)
+          && request.resource.data.isActive is bool
+          && request.resource.data.isDefault is bool
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isMember(familyId)
+          && changedOnly(['name', 'isActive', 'updatedAt'])
+          && shortText(request.resource.data.name, 40)
+          && request.resource.data.isActive is bool
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false; // hanya dinonaktifkan
+      }
+
+      // ---------- Ledger (sumber kebenaran saldo) ----------
+      match /ledger/{entryId} {
+        function typeFields(d) {
+          return d.type == 'opening_balance'
+            || (d.type == 'income'
+                && d.keys().hasAll(['categoryId']) && safeId(d.categoryId)
+                && exists(catPath(familyId, d.categoryId))
+                && get(catPath(familyId, d.categoryId)).data.type == 'income')
+            || (d.type == 'expense'
+                && d.keys().hasAll(['categoryId', 'paymentMethod']) && safeId(d.categoryId)
+                && exists(catPath(familyId, d.categoryId))
+                && get(catPath(familyId, d.categoryId)).data.type == 'expense'
+                && d.paymentMethod in ['Cash', 'Transfer bank', 'E-wallet', 'Kartu debit', 'Lainnya'])
+            || ((d.type == 'savings_deposit' || d.type == 'savings_withdraw')
+                && d.keys().hasAll(['savingsId']) && safeId(d.savingsId)
+                && exists(goalPath(familyId, d.savingsId)))
+            || (d.type == 'savings_transfer'
+                && d.keys().hasAll(['savingsId', 'toSavingsId'])
+                && safeId(d.savingsId) && safeId(d.toSavingsId)
+                && d.savingsId != d.toSavingsId
+                && exists(goalPath(familyId, d.savingsId))
+                && exists(goalPath(familyId, d.toSavingsId)));
+        }
+        function validEntry(d) {
+          return d.familyId == familyId
+            && d.type in ['income', 'expense', 'savings_deposit', 'savings_withdraw', 'savings_transfer', 'opening_balance']
+            && isMoney(d.amount)
+            && shortText(d.name, 100)
+            && d.description is string && d.description.size() <= 300
+            && isDateStr(d.date)
+            && d.monthId == d.date.split('-')[0] + '-' + d.date.split('-')[1]
+            && d.status in ['active', 'deleted']
+            && typeFields(d);
+        }
+
+        allow read: if isMember(familyId);
+
+        // Nominal wajib bilangan bulat positif; identitas pencatat dipaksa sama dengan pengguna yang login.
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(
+               ['familyId', 'type', 'date', 'monthId', 'name', 'categoryId', 'amount', 'paymentMethod', 'description',
+                'savingsId', 'toSavingsId', 'status', 'createdBy', 'createdByName', 'createdAt', 'updatedBy', 'updatedAt'])
+          && validEntry(request.resource.data)
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdByName == memberName(familyId)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedBy == request.auth.uid
+          && request.resource.data.updatedAt == request.time;
+
+        // Jenis, pencatat, dan waktu pembuatan tidak dapat diubah. Hapus = status 'deleted' (jejak tetap ada).
+        allow update: if isMember(familyId)
+          && changedOnly(['date', 'monthId', 'name', 'categoryId', 'amount', 'paymentMethod', 'description',
+                          'status', 'updatedBy', 'updatedAt'])
+          && validEntry(request.resource.data)
+          && request.resource.data.updatedBy == request.auth.uid
+          && request.resource.data.updatedAt == request.time;
+
+        allow delete: if false;
+      }
+
+      // ---------- Anggaran ----------
+      match /budgets/{budgetId} {
+        function validThresholds(t) { return t is list && t.size() >= 1 && t.size() <= 3 && t.hasOnly([75, 90, 100]); }
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(
+               ['monthId', 'categoryId', 'limitAmount', 'thresholds', 'createdBy', 'createdAt', 'updatedAt'])
+          && isMonthStr(request.resource.data.monthId)
+          && safeId(request.resource.data.categoryId)
+          && budgetId == request.resource.data.monthId + '_' + request.resource.data.categoryId
+          && exists(catPath(familyId, request.resource.data.categoryId))
+          && get(catPath(familyId, request.resource.data.categoryId)).data.type == 'expense'
+          && isMoney(request.resource.data.limitAmount)
+          && validThresholds(request.resource.data.thresholds)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isMember(familyId)
+          && changedOnly(['limitAmount', 'thresholds', 'updatedAt'])
+          && isMoney(request.resource.data.limitAmount)
+          && validThresholds(request.resource.data.thresholds)
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isMember(familyId);
+      }
+
+      // ---------- Penanda peringatan anggaran (anti notifikasi ganda) ----------
+      // Hanya create. ID dokumen deterministik (kategori_bulan_ambang); membuat ulang = update = ditolak.
+      match /budgetAlerts/{alertId} {
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(['categoryId', 'monthId', 'threshold', 'createdBy', 'createdAt'])
+          && safeId(request.resource.data.categoryId)
+          && isMonthStr(request.resource.data.monthId)
+          && request.resource.data.threshold in [75, 90, 100]
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      // ---------- Pos tabungan ----------
+      match /savingsGoals/{goalId} {
+        function validGoal(d) {
+          return shortText(d.name, 60)
+            && isMoney(d.targetAmount)
+            && isDateStr(d.startDate)
+            && (d.targetDate == '' || isDateStr(d.targetDate))
+            && d.description is string && d.description.size() <= 300
+            && d.status in ['active', 'achieved', 'archived'];
+        }
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(
+               ['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+          && validGoal(request.resource.data)
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isMember(familyId)
+          && changedOnly(['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'status', 'updatedAt'])
+          && validGoal(request.resource.data)
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false; // hanya diarsipkan
+      }
+
+      // ---------- Notifikasi ----------
+      match /notifications/{notifId} {
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(['type', 'message', 'actorUid', 'actorName', 'readBy', 'createdAt'])
+          && request.resource.data.type in ['activity', 'budget', 'savings_goal']
+          && shortText(request.resource.data.message, 300)
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.actorName == memberName(familyId)
+          && request.resource.data.readBy is map
+          && request.resource.data.readBy.keys().hasOnly([request.auth.uid])
+          && request.resource.data.createdAt == request.time;
+        // Anggota hanya boleh menandai dirinya sendiri sebagai sudah membaca.
+        allow update: if isMember(familyId)
+          && changedOnly(['readBy'])
+          && request.resource.data.readBy.diff(resource.data.readBy).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.readBy[request.auth.uid] == true;
+        allow delete: if false;
+      }
+
+      // ---------- Log audit (append-only) ----------
+      match /activityLogs/{logId} {
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(
+               ['action', 'entityType', 'entityId', 'summary', 'before', 'after', 'actorUid', 'actorName', 'createdAt'])
+          && request.resource.data.action in ['create', 'update', 'delete']
+          && request.resource.data.entityType in ['ledger', 'budget', 'savingsGoal']
+          && request.resource.data.entityId is string
+          && request.resource.data.summary is string && request.resource.data.summary.size() <= 300
+          && (request.resource.data.before == null || request.resource.data.before is map)
+          && (request.resource.data.after == null || request.resource.data.after is map)
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.actorName == memberName(familyId)
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // =====================================================================
+    // Undangan keluarga
+    // =====================================================================
+    match /invites/{code} {
+      allow get: if signedIn();      // perlu mengetahui kodenya
+      allow list: if false;          // daftar undangan tidak dapat ditelusuri
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['familyId', 'active', 'createdBy', 'createdAt'])
+        && request.resource.data.active == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && safeId(request.resource.data.familyId)
+        && getAfter(famPath(request.resource.data.familyId)).data.ownerUid == request.auth.uid
+        && getAfter(famPath(request.resource.data.familyId)).data.inviteCode == code;
+      allow update: if signedIn() && (
+        (changedOnly(['active'])
+          && request.resource.data.active == false
+          && get(famPath(resource.data.familyId)).data.ownerUid == request.auth.uid)
+        ||
+        (changedOnly(['active', 'usedBy'])
+          && resource.data.active == true
+          && request.resource.data.active == false
+          && request.resource.data.usedBy == request.auth.uid
+          && existsAfter(memberPath(resource.data.familyId, request.auth.uid)))
+      );
+      allow delete: if false;
+    }
+
+    // Selain yang tercantum di atas: ditolak.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
