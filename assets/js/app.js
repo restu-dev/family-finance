@@ -13,6 +13,9 @@ import { mountReports } from "./reports.js";
 import { mountNotifications, unreadCount } from "./notifications.js";
 import { mountSettings } from "./settings.js";
 import { openAddChooser } from "./transactions.js";
+import { healMembership, backfillPartner } from "./members.js";
+import { mountApprovals, renderPending, checkAdmin, approvalStatus, watchPending } from "./approvals.js";
+import { syncPushToken, disablePush } from "./push.js";
 
 const MENU = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard", mount: mountDashboard },
@@ -23,6 +26,7 @@ const MENU = [
   { id: "laporan", label: "Laporan", icon: "reports", mount: mountReports },
   { id: "notifikasi", label: "Notifikasi", icon: "bell", mount: mountNotifications },
   { id: "pengaturan", label: "Pengaturan", icon: "settings", mount: mountSettings },
+  { id: "persetujuan", label: "Persetujuan akun", icon: "check", mount: mountApprovals, admin: true },
 ];
 const BOTTOM = ["dashboard", "pemasukan", "pengeluaran", "tabungan", "pengaturan"];
 
@@ -31,9 +35,15 @@ const user = await requireAuth();
 if (user) start(user);
 
 async function start(user) {
-  const ctx = { user, profile: null, family: null };
+  const ctx = { user, profile: null, family: null, isAdmin: false };
   async function refresh() {
+    ctx.isAdmin = await checkAdmin(user.uid);
     try { ctx.profile = await loadProfile(user.uid); } catch { ctx.profile = null; }
+    // Dikeluarkan pemilik saat sedang tidak membuka aplikasi: kosongkan tautan keluarga di profil.
+    if (ctx.profile?.familyId && await healMembership(user.uid, ctx.profile.familyId)) {
+      ctx.profile.familyId = null;
+      toast("Anda tidak lagi tergabung dalam keluarga.", "info");
+    }
     ctx.family = ctx.profile?.familyId ? await getFamily(ctx.profile.familyId) : null;
   }
   await refresh();
@@ -43,7 +53,7 @@ async function start(user) {
     <aside class="sidebar">
       <div class="brand">Family Finance</div>
       <nav aria-label="Menu utama">
-        ${MENU.map((m) => `<a class="nav-link" href="#${m.id}" data-id="${m.id}">${icon(m.icon)}<span>${m.label}</span></a>`).join("")}
+        ${MENU.filter((m) => !m.admin || ctx.isAdmin).map((m) => `<a class="nav-link" href="#${m.id}" data-id="${m.id}">${icon(m.icon)}<span>${m.label}</span></a>`).join("")}
       </nav>
       <div class="sidebar-foot">
         <button class="btn btn-ghost btn-block" id="install" hidden>${icon("download", 18)}<span>Pasang aplikasi</span></button>
@@ -70,7 +80,7 @@ async function start(user) {
   const title = document.getElementById("page-title");
   const fab = document.getElementById("fab");
   const badge = document.getElementById("badge");
-  let cleanup = null, token = 0, storeOn = false;
+  let cleanup = null, token = 0, storeOn = false, afterStartDone = false, healTried = false;
 
   function updateBadge() {
     const n = unreadCount(user.uid);
@@ -82,7 +92,7 @@ async function start(user) {
     const my = ++token;
     cleanup?.(); cleanup = null;
     const id = location.hash.slice(1) || "dashboard";
-    const item = MENU.find((m) => m.id === id) || MENU[0];
+    const item = MENU.find((m) => m.id === id && (!m.admin || ctx.isAdmin)) || MENU[0];
     document.querySelectorAll(".nav-link[data-id]").forEach((a) => a.classList.toggle("active", a.dataset.id === item.id));
     title.textContent = item.label;
     document.title = `${item.label} | Family Finance`;
@@ -93,15 +103,37 @@ async function start(user) {
       view.innerHTML = `<section class="card empty"><h2>Profil belum dapat dimuat</h2><p>Periksa koneksi internet, lalu muat ulang halaman.</p></section>`;
       return;
     }
+    if (item.admin) { // halaman admin tidak butuh data keluarga
+      fab.hidden = true; view.innerHTML = ""; cleanup = item.mount(view, ctx); return;
+    }
+    if (approvalStatus(ctx.profile) !== "approved" && !ctx.isAdmin) {
+      fab.hidden = true;
+      cleanup = renderPending(view, ctx, async () => { await refresh(); render(); });
+      return;
+    }
     if (!hasFamily) {
       renderOnboarding(view, ctx, async () => { await refresh(); render(); });
       return;
     }
-    if (!storeOn) { startStore(ctx); storeOn = true; subscribe(updateBadge); }
+    if (!storeOn) {
+      startStore(ctx); storeOn = true; subscribe(updateBadge);
+      // Dikeluarkan saat aplikasi terbuka: akses data ditolak. Pastikan lalu pulihkan profil dan muat ulang.
+      subscribe(() => {
+        if (state.error?.code === "permission-denied" && !healTried) {
+          healTried = true;
+          healMembership(user.uid, ctx.profile.familyId).then((healed) => {
+            if (healed) { toast("Anda tidak lagi tergabung dalam keluarga.", "info"); stopStore(); setTimeout(() => location.reload(), 1200); }
+          });
+        }
+      });
+    }
     view.innerHTML = skeleton;
     await whenReady();
     if (my !== token) return;
     if (state.error) {
+      if (state.error.code === "permission-denied" && await healMembership(user.uid, ctx.profile.familyId)) {
+        stopStore(); location.reload(); return;
+      }
       view.innerHTML = `<section class="card empty"><h2>Data belum dapat dimuat</h2>
         <p>${state.error.code === "permission-denied" ? "Akses ditolak. Pastikan Security Rules versi terbaru sudah dipublikasikan." : "Periksa koneksi internet, lalu muat ulang halaman."}</p></section>`;
       return;
@@ -109,6 +141,7 @@ async function start(user) {
     view.innerHTML = "";
     cleanup = item.mount(view, ctx);
     updateBadge();
+    if (!afterStartDone) { afterStartDone = true; backfillPartner(ctx); syncPushToken(ctx); }
     view.focus({ preventScroll: true });
   }
   window.addEventListener("hashchange", render);
@@ -124,8 +157,20 @@ async function start(user) {
   showNet();
 
   fab.addEventListener("click", () => openAddChooser(ctx));
+
+  // Admin: tampilkan jumlah akun yang menunggu persetujuan pada menu, dan beri tahu saat ada yang baru.
+  if (ctx.isAdmin) {
+    let prev = null;
+    watchPending((list) => {
+      const label = document.querySelector('.sidebar .nav-link[data-id="persetujuan"] span');
+      if (label) label.textContent = list.length ? `Persetujuan akun (${list.length})` : "Persetujuan akun";
+      if (prev !== null && list.length > prev) toast("Ada akun baru menunggu persetujuan.", "info");
+      prev = list.length;
+    });
+  }
   document.getElementById("logout").addEventListener("click", async () => {
     if (await confirmModal({ title: "Keluar dari akun?", message: "Anda perlu masuk lagi untuk mengakses data keluarga.", confirmText: "Keluar" })) {
+      await disablePush(ctx).catch(() => {}); // perangkat ini berhenti menerima push akun ini
       stopStore();
       await logoutUser();
       location.replace("login.html");

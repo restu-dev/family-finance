@@ -30,6 +30,7 @@ export async function registerUser({ name, email, password }) {
     displayName,
     email: cred.user.email,
     familyId: null,
+    approvalStatus: "pending", // wajib disetujui admin sebelum memakai aplikasi
     createdAt: serverTimestamp(),
   });
   try { await sendEmailVerification(cred.user); } catch { /* tidak memblokir pendaftaran */ }

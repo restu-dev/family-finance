@@ -203,3 +203,6 @@ table.report tfoot th { background: var(--bg); }
 .modal-head h2 { font-size: 1.15rem; }
 .modal-actions { margin-top: 8px; }
 :root { --orange: #c2570c; }
+
+.push-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.member-list .actions { align-items: center; }

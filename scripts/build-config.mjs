@@ -27,6 +27,8 @@ if (missing.length) {
 writeFileSync(
   "assets/js/firebase-config.js",
   "// File ini dibuat otomatis oleh scripts/build-config.mjs. Jangan diedit.\n" +
-    "export const firebaseConfig = " + JSON.stringify(config, null, 2) + ";\n"
+    "export const firebaseConfig = " + JSON.stringify(config, null, 2) + ";\n" +
+    "// Kunci publik Web Push (VAPID). Kosong = notifikasi push dinonaktifkan.\n" +
+    "export const vapidKey = " + JSON.stringify(process.env.FIREBASE_VAPID_KEY || "") + ";\n"
 );
 console.log("firebase-config.js dibuat.");

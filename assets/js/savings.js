@@ -1,4 +1,4 @@
-import { state, subscribe, goalName } from "./store.js";
+import { state, subscribe, goalName, personName } from "./store.js";
 import { saveGoal, setGoalStatus, addEntry, ledgerErrorMessage } from "./ledger.js";
 import { savingsBalances, mainBalanceThrough } from "./balance.js";
 import { openModal, confirmModal, toast, setLoading, emptyState, bindAmountInput } from "./ui.js";
@@ -116,7 +116,7 @@ export function mountSavings(el, ctx) {
       title: `Riwayat ${goal.name}`,
       html: rows.length ? `<div class="tx-list compact">${rows.map((e) => `
         <div class="tx-row" data-id="${escapeHtml(e.id)}"><div class="tx-date">${formatDateStr(e.date)}</div>
-          <div class="tx-main"><strong>${escapeHtml(e.name)}</strong><span class="tx-sub">${escapeHtml(e.createdByName || "")}</span></div>
+          <div class="tx-main"><strong>${escapeHtml(e.name)}</strong><span class="tx-sub">${escapeHtml(personName(e.createdBy, e.createdByName))}</span></div>
           <div class="tx-amt"><span class="${sign(e) > 0 ? "plus" : "minus"}">${sign(e) > 0 ? "+" : "-"}${formatRupiah(e.amount)}</span></div>
           <div class="tx-act"><button class="btn-link" data-act="detail">Detail</button></div></div>`).join("")}</div>`
         : emptyState("Belum ada riwayat", "Dana yang ditambah atau ditarik akan tercatat di sini."),

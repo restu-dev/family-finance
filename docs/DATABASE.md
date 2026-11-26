@@ -5,9 +5,10 @@ Nominal selalu **bilangan bulat rupiah**. Tanggal transaksi disimpan sebagai str
 
 | Koleksi | ID dokumen | Field utama |
 |---|---|---|
-| `users/{uid}` | uid Firebase Auth | `displayName`, `email`, `familyId` (null sampai bergabung), `createdAt` |
+| `users/{uid}` | uid Firebase Auth | `displayName`, `email`, `familyId` (null sampai bergabung), `approvalStatus` (pending/approved/rejected; akun lama tanpa field dianggap approved), `reviewedBy`, `reviewedAt`, `createdAt` |
+| `admins/{uid}` | uid pemilik aplikasi | `enabled`. Hanya dibuat lewat Console; pengguna hanya dapat memeriksa dokumennya sendiri |
 | `invites/{kode}` | kode 8 karakter | `familyId`, `active`, `createdBy`, `createdAt`, `usedBy` (saat dipakai) |
-| `families/{familyId}` | otomatis | `name`, `currency` ("IDR"), `timezone`, `ownerUid`, `inviteCode`, `memberCount` (1 atau 2), `createdAt` |
+| `families/{familyId}` | otomatis | `name`, `currency` ("IDR"), `timezone`, `ownerUid`, `inviteCode`, `memberCount` (1 atau 2), `partnerUid` (uid anggota kedua, null bila sendiri), `createdAt` |
 | `.../members/{uid}` | uid | `uid`, `displayName`, `role` (owner/member), `status`, `joinedAt`, `inviteCode` (anggota yang bergabung) |
 | `.../categories/{id}` | slug bawaan atau otomatis | `type` (income/expense), `name`, `isActive`, `isDefault`, `createdAt`, `updatedAt` |
 | `.../ledger/{entryId}` | UUID dari form (anti duplikat) | `familyId`, `type`, `date`, `monthId`, `name`, `categoryId`, `amount`, `paymentMethod`, `description`, `savingsId`, `toSavingsId`, `status` (active/deleted), `createdBy`, `createdByName`, `createdAt`, `updatedBy`, `updatedAt` |
@@ -15,7 +16,8 @@ Nominal selalu **bilangan bulat rupiah**. Tanggal transaksi disimpan sebagai str
 | `.../budgetAlerts/{kategori_bulan_ambang}` | deterministik | `categoryId`, `monthId`, `threshold`, `createdBy`, `createdAt` (hanya create) |
 | `.../savingsGoals/{savingsId}` | otomatis | `name`, `targetAmount`, `startDate`, `targetDate` ("" bila kosong), `description`, `status` (active/achieved/archived), `createdBy`, `createdAt`, `updatedAt` |
 | `.../notifications/{id}` | otomatis | `type`, `message`, `actorUid`, `actorName`, `readBy` ({uid: true}), `createdAt` |
-| `.../activityLogs/{id}` | otomatis | `action`, `entityType`, `entityId`, `summary`, `before`, `after`, `actorUid`, `actorName`, `createdAt` (append-only) |
+| `.../pushTokens/{sha256(token)}` | hash token FCM | `token`, `uid`, `updatedAt` (hanya terbaca oleh pemiliknya; server membaca semuanya) |
+| `.../activityLogs/{id}` | otomatis | `action`, `entityType` (ledger/budget/savingsGoal/member), `entityId`, `summary`, `before`, `after`, `actorUid`, `actorName`, `createdAt` (append-only) |
 
 ## Jenis entri ledger
 
@@ -44,3 +46,11 @@ Total kekayaan      = saldo utama + Σ saldo semua pos tabungan
 - **`monthlySummaries` tidak dipakai.** Ringkasan bulan dihitung langsung dari ledger, jadi transaksi terlambat otomatis memperbarui saldo akhir bulan itu dan saldo awal bulan berikutnya, tanpa proses reset.
 - **Satu koleksi `ledger`** menggantikan `transactions` + `savingsTransactions` agar tidak ada penghitungan ganda.
 - **Hapus = `status: "deleted"`.** Tidak ada penghapusan fisik transaksi; jejaknya tetap ada di `activityLogs`.
+
+## Keanggotaan
+
+- Keluar atau dikeluarkan = dokumen `members/{uid}` **dihapus**, `memberCount` turun ke 1, `partnerUid` dikosongkan, semuanya dalam satu batch yang dikunci Security Rules (tidak ada cara menurunkan hitungan tanpa menghapus anggota, atau sebaliknya).
+- Transaksi yang pernah dicatat tidak dihapus. `createdBy` menyimpan uid; nama yang ditampilkan diambil dari data anggota saat ini (`createdByName` hanya cadangan).
+- Pengguna yang dikeluarkan pemilik tidak bisa mengubah profilnya saat itu juga; saat membuka aplikasi, `users/{uid}.familyId` dikosongkan oleh aplikasinya sendiri, dan rules hanya mengizinkannya bila data anggotanya memang sudah tidak ada.
+- Ganti nama mengubah `users/{uid}.displayName` dan `members/{uid}.displayName` dalam satu batch; rules menolak bila keduanya tidak sama.
+- `notifications.pushedAt` ditulis server saat push dikirim (mencegah kiriman ganda); klien tidak bisa mengubahnya.

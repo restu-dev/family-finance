@@ -38,6 +38,8 @@ export function stopStore() {
 }
 
 export const catName = (id) => state.categories.find((c) => c.id === id)?.name || "(kategori dihapus)";
+// Nama pencatat diambil dari data anggota saat ini, sehingga ganti nama ikut berlaku pada transaksi lama.
+export const personName = (uid, fallback) => state.members.find((m) => m.uid === uid)?.displayName || fallback || "";
 export const goalName = (id) => state.goals.find((g) => g.id === id)?.name || "(pos dihapus)";
 
 function partnerToastEnabled() {

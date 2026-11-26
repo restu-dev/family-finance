@@ -5,6 +5,7 @@ import {
   doc, collection, writeBatch, serverTimestamp, getDoc,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { state, catName, goalName } from "./store.js";
+import { sendPush } from "./push.js";
 import { formatRupiah, cleanText, isValidDateStr, todayJakarta, monthLabel, monthStart, monthEnd } from "./utils.js";
 import {
   mainBalanceThrough, savingsBalances, periodTotals, alertDecision, alertKey, deletionProblem, budgetStatus,
@@ -31,21 +32,29 @@ function requireOnline() {
 const col = (ctx, name) => collection(db, "families", ctx.profile.familyId, name);
 const me = (ctx) => ({ uid: ctx.user.uid, name: ctx.profile.displayName });
 
+// Menyimpan batch, lalu (tanpa menunggu) meminta server mengirim push untuk notifikasi di dalam batch itu.
+export async function commitBatch(ctx, batch) {
+  await batch.commit();
+  if (batch.__notifId) sendPush(ctx, batch.__notifId);
+}
+
 const SNAP_FIELDS = ["type", "date", "name", "categoryId", "amount", "paymentMethod", "description", "savingsId", "toSavingsId", "status"];
 const snap = (e) => Object.fromEntries(SNAP_FIELDS.filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
 
 // Log audit + notifikasi untuk pasangan, ditambahkan ke batch yang sama dengan operasi utamanya.
-function sideDocs(batch, ctx, { action, entityType, entityId, summary, before = null, after = null, message = null, type = "activity" }) {
+export function sideDocs(batch, ctx, { action, entityType, entityId, summary, before = null, after = null, message = null, type = "activity" }) {
   const { uid, name } = me(ctx);
   batch.set(doc(col(ctx, "activityLogs")), {
     action, entityType, entityId, summary: cleanText(summary, 300), before, after,
     actorUid: uid, actorName: name, createdAt: serverTimestamp(),
   });
   if (message) {
-    batch.set(doc(col(ctx, "notifications")), {
+    const nref = doc(col(ctx, "notifications"));
+    batch.set(nref, {
       type, message: cleanText(message, 300), actorUid: uid, actorName: name,
       readBy: { [uid]: true }, createdAt: serverTimestamp(),
     });
+    batch.__notifId = nref.id; // dipakai commitBatch untuk meminta push ke pasangan
   }
 }
 
@@ -134,7 +143,7 @@ export async function addEntry(ctx, input) {
     after: snap({ ...input, name, status: "active" }), message: describe(ctx, { ...input, name }, "create"),
   });
   try {
-    await batch.commit();
+    await commitBatch(ctx, batch);
   } catch (err) {
     if (err.code === "permission-denied") {
       const existing = await getDoc(ref).catch(() => null);
@@ -173,7 +182,7 @@ export async function updateEntry(ctx, entry, changes) {
     action: "update", entityType: "ledger", entityId: entry.id, summary: describe(ctx, after, "update"),
     before: snap(entry), after: snap(after), message: describe(ctx, after, "update"),
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
   await afterWrite(ctx, after);
 }
 
@@ -188,7 +197,7 @@ export async function deleteEntry(ctx, entry) {
     action: "delete", entityType: "ledger", entityId: entry.id, summary: describe(ctx, entry, "delete"),
     before: snap(entry), after: { ...snap(entry), status: "deleted" }, message: describe(ctx, entry, "delete"),
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
   for (const id of [entry.savingsId, entry.toSavingsId].filter(Boolean)) await maybeAchieve(ctx, id).catch(() => {});
 }
 
@@ -220,10 +229,12 @@ export async function checkBudgetAlerts(ctx, monthId, categoryId, override = nul
     categoryId, monthId, threshold: t, createdBy: ctx.user.uid, createdAt: serverTimestamp(),
   });
   const { uid, name } = me(ctx);
-  batch.set(doc(col(ctx, "notifications")), {
+  const nref = doc(col(ctx, "notifications"));
+  batch.set(nref, {
     type: "budget", message, actorUid: uid, actorName: name, readBy: { [uid]: true }, createdAt: serverTimestamp(),
   });
-  try { await batch.commit(); } catch (err) { if (err.code !== "permission-denied") throw err; } // sudah pernah dikirim
+  batch.__notifId = nref.id;
+  try { await commitBatch(ctx, batch); } catch (err) { if (err.code !== "permission-denied") throw err; } // sudah pernah dikirim
 }
 
 // Menandai pos tabungan tercapai (dan mengembalikannya ke aktif bila saldo turun lagi).
@@ -239,11 +250,11 @@ export async function maybeAchieve(ctx, goalId) {
       action: "update", entityType: "savingsGoal", entityId: goalId, summary: `Target tabungan ${g.name} tercapai.`,
       message: `Target tabungan ${g.name} berhasil tercapai.`, type: "savings_goal",
     });
-    await batch.commit();
+    await commitBatch(ctx, batch);
   } else if (g.status === "achieved" && bal < g.targetAmount) {
     const batch = writeBatch(db);
     batch.update(ref, { status: "active", updatedAt: serverTimestamp() });
-    await batch.commit();
+    await commitBatch(ctx, batch);
   }
 }
 
@@ -269,7 +280,7 @@ export async function saveGoal(ctx, { id = null, name, targetAmount, startDate, 
       message: `${ctx.profile.displayName} membuat pos tabungan ${n}.`,
     });
   }
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }
 
 export async function setGoalStatus(ctx, goal, status) {
@@ -280,7 +291,7 @@ export async function setGoalStatus(ctx, goal, status) {
     action: "update", entityType: "savingsGoal", entityId: goal.id,
     summary: `${status === "archived" ? "Mengarsipkan" : "Mengaktifkan"} pos tabungan ${goal.name}.`,
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }
 
 // ---------- Anggaran ----------
@@ -301,7 +312,7 @@ export async function saveBudget(ctx, { monthId, categoryId, limitAmount, thresh
     after: { monthId, categoryId, limitAmount, thresholds: th },
     message: `${ctx.profile.displayName} ${exists ? "mengubah" : "membuat"} anggaran ${catName(categoryId)} ${formatRupiah(limitAmount)} (${monthLabel(monthId)}).`,
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
   await checkBudgetAlerts(ctx, monthId, categoryId, { limitAmount, thresholds: th }).catch(() => {});
 }
 
@@ -314,7 +325,7 @@ export async function deleteBudget(ctx, budget) {
     summary: `Menghapus anggaran ${catName(budget.categoryId)} ${monthLabel(budget.monthId)}.`,
     before: { monthId: budget.monthId, categoryId: budget.categoryId, limitAmount: budget.limitAmount },
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }
 
 export async function copyBudgets(ctx, fromMonth, toMonth) {
@@ -332,7 +343,7 @@ export async function copyBudgets(ctx, fromMonth, toMonth) {
     action: "create", entityType: "budget", entityId: toMonth, summary: `Menyalin ${source.length} anggaran dari ${monthLabel(fromMonth)} ke ${monthLabel(toMonth)}.`,
     message: `${ctx.profile.displayName} menyalin ${source.length} anggaran ke ${monthLabel(toMonth)}.`,
   });
-  await batch.commit();
+  await commitBatch(ctx, batch);
   return source.length;
 }
 
@@ -347,14 +358,14 @@ export async function saveCategory(ctx, { id = null, type, name }) {
   const batch = writeBatch(db);
   if (id) batch.update(doc(col(ctx, "categories"), id), { name: n, updatedAt: serverTimestamp() });
   else batch.set(doc(col(ctx, "categories")), { type, name: n, isActive: true, isDefault: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }
 
 export async function setCategoryActive(ctx, category, isActive) {
   requireOnline();
   const batch = writeBatch(db);
   batch.update(doc(col(ctx, "categories"), category.id), { isActive, updatedAt: serverTimestamp() });
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }
 
 // ---------- Notifikasi ----------
@@ -362,5 +373,5 @@ export async function markNotificationsRead(ctx, ids) {
   requireOnline();
   const batch = writeBatch(db);
   ids.slice(0, 400).forEach((id) => batch.update(doc(col(ctx, "notifications"), id), { [`readBy.${ctx.user.uid}`]: true }));
-  await batch.commit();
+  await commitBatch(ctx, batch);
 }

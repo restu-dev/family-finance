@@ -38,7 +38,7 @@ export async function createFamily({ uid, displayName, name }) {
   const batch = writeBatch(db);
   batch.set(familyRef, {
     name: familyName, currency: "IDR", timezone: "Asia/Jakarta",
-    ownerUid: uid, inviteCode: code, memberCount: 1, createdAt: serverTimestamp(),
+    ownerUid: uid, inviteCode: code, memberCount: 1, partnerUid: null, createdAt: serverTimestamp(),
   });
   batch.set(doc(db, "families", familyId, "members", uid), {
     uid, displayName, role: "owner", status: "active", joinedAt: serverTimestamp(),
@@ -68,7 +68,7 @@ export async function joinFamily({ uid, displayName, codeInput }) {
   batch.set(doc(db, "families", familyId, "members", uid), {
     uid, displayName, role: "member", status: "active", joinedAt: serverTimestamp(), inviteCode: code,
   });
-  batch.update(doc(db, "families", familyId), { memberCount: 2 });
+  batch.update(doc(db, "families", familyId), { memberCount: 2, partnerUid: uid });
   batch.update(inviteRef, { active: false, usedBy: uid });
   batch.update(doc(db, "users", uid), { familyId });
   await batch.commit();

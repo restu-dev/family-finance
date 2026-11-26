@@ -1,4 +1,4 @@
-import { state, subscribe } from "./store.js";
+import { state, subscribe, personName } from "./store.js";
 import { markNotificationsRead, ledgerErrorMessage } from "./ledger.js";
 import { toast, emptyState } from "./ui.js";
 import { escapeHtml, formatDateTime } from "./utils.js";
@@ -20,7 +20,7 @@ export function mountNotifications(el, ctx) {
       const isUnread = !n.readBy?.[uid];
       return `<article class="notif ${isUnread ? "unread" : ""}" data-id="${escapeHtml(n.id)}">
         <div><p>${escapeHtml(n.message)}</p>
-          <span class="muted small">${escapeHtml(n.actorUid === uid ? "Anda" : n.actorName || "")}, ${n.createdAt?.toDate ? formatDateTime(n.createdAt.toDate()) : "baru saja"}</span></div>
+          <span class="muted small">${escapeHtml(n.actorUid === uid ? "Anda" : personName(n.actorUid, n.actorName))}, ${n.createdAt?.toDate ? formatDateTime(n.createdAt.toDate()) : "baru saja"}</span></div>
         ${isUnread ? `<button class="btn-link" data-read>Tandai dibaca</button>` : ""}</article>`;
     }).join("") : emptyState("Belum ada notifikasi", "Aktivitas pasangan dan peringatan anggaran akan muncul di sini.");
   }

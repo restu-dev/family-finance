@@ -16,10 +16,12 @@ before(async () => {
     await setDoc(doc(db, "users/alice"), { displayName: "Alice", email: "a@x.id", familyId: F, createdAt: new Date() });
     await setDoc(doc(db, "users/bob"), { displayName: "Bob", email: "b@x.id", familyId: F, createdAt: new Date() });
     await setDoc(doc(db, "users/eve"), { displayName: "Eve", email: "e@x.id", familyId: null, createdAt: new Date() });
-    await setDoc(doc(db, `families/${F}`), { name: "Keluarga", currency: "IDR", timezone: "Asia/Jakarta", ownerUid: "alice", inviteCode: "ABCD2345", memberCount: 2, createdAt: new Date() });
+    await setDoc(doc(db, `families/${F}`), { name: "Keluarga", currency: "IDR", timezone: "Asia/Jakarta", ownerUid: "alice", inviteCode: "ABCD2345", memberCount: 2, partnerUid: "bob", createdAt: new Date() });
     await setDoc(doc(db, `families/${F}/members/alice`), { uid: "alice", displayName: "Alice", role: "owner", status: "active", joinedAt: new Date() });
     await setDoc(doc(db, `families/${F}/members/bob`), { uid: "bob", displayName: "Bob", role: "member", status: "active", joinedAt: new Date() });
     await setDoc(doc(db, `families/${F}/categories/exp_dapur`), { type: "expense", name: "Belanja dapur", isActive: true, isDefault: true, createdAt: new Date(), updatedAt: new Date() });
+    await setDoc(doc(db, "users/newbie"), { displayName: "Newbie", email: "n@x.id", familyId: null, approvalStatus: "pending", createdAt: new Date() });
+    await setDoc(doc(db, "admins/alice"), { enabled: true });
     await setDoc(doc(db, `invites/USED0001`), { familyId: F, active: false, createdBy: "alice", createdAt: new Date() });
   });
 });
@@ -77,4 +79,62 @@ test("kode undangan terpakai tidak bisa dipakai bergabung; daftar undangan tidak
 });
 test("pengguna tidak dapat mengubah role dirinya", async () => {
   await assertFails(updateDoc(doc(as("bob"), `families/${F}/members/bob`), { role: "owner" }));
+});
+
+test("pasangan keluar: batch lengkap diterima, tanpa menghapus anggota ditolak", async () => {
+  const db = as("bob");
+  const bad = writeBatch(db);
+  bad.update(doc(db, `families/${F}`), { memberCount: 1, partnerUid: null }); // tanpa menghapus anggota
+  await assertFails(bad.commit());
+  const ok = writeBatch(db);
+  ok.delete(doc(db, `families/${F}/members/bob`));
+  ok.update(doc(db, `families/${F}`), { memberCount: 1, partnerUid: null });
+  ok.update(doc(db, "users/bob"), { familyId: null });
+  await assertSucceeds(ok.commit());
+});
+test("pengguna yang masih anggota tidak dapat mengosongkan familyId-nya", async () => {
+  await assertFails(updateDoc(doc(as("alice"), "users/alice"), { familyId: null }));
+});
+test("ganti nama harus konsisten antara profil dan data anggota", async () => {
+  const db = as("alice");
+  const half = writeBatch(db);
+  half.update(doc(db, "users/alice"), { displayName: "Alicia" });
+  await assertFails(half.commit());
+  const full = writeBatch(db);
+  full.update(doc(db, "users/alice"), { displayName: "Alicia" });
+  full.update(doc(db, `families/${F}/members/alice`), { displayName: "Alicia" });
+  await assertSucceeds(full.commit());
+});
+test("token push hanya milik sendiri", async () => {
+  await assertSucceeds(setDoc(doc(as("alice"), `families/${F}/pushTokens/aaaa`), { token: "tok", uid: "alice", updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(as("alice"), `families/${F}/pushTokens/bbbb`), { token: "tok", uid: "bob", updatedAt: serverTimestamp() }));
+  await assertFails(getDoc(doc(as("bob"), `families/${F}/pushTokens/aaaa`)));
+});
+
+test("pendaftaran wajib berstatus pending; tidak bisa menyetujui diri sendiri", async () => {
+  const db = env.authenticatedContext("fresh").firestore();
+  const base = { displayName: "Fresh", email: "f@x.id", familyId: null, createdAt: serverTimestamp() };
+  await assertFails(setDoc(doc(db, "users/fresh"), { ...base, approvalStatus: "approved" }));
+  await assertSucceeds(setDoc(doc(db, "users/fresh"), { ...base, approvalStatus: "pending" }));
+  await assertFails(updateDoc(doc(db, "users/fresh"), { approvalStatus: "approved" }));
+});
+test("akun pending tidak dapat membuat keluarga", async () => {
+  const db = as("newbie");
+  const b = writeBatch(db);
+  b.set(doc(db, "families/famN"), { name: "Keluarga N", currency: "IDR", timezone: "Asia/Jakarta", ownerUid: "newbie", inviteCode: "ZZZZ2345", memberCount: 1, partnerUid: null, createdAt: serverTimestamp() });
+  b.set(doc(db, "families/famN/members/newbie"), { uid: "newbie", displayName: "Newbie", role: "owner", status: "active", joinedAt: serverTimestamp() });
+  b.set(doc(db, "invites/ZZZZ2345"), { familyId: "famN", active: true, createdBy: "newbie", createdAt: serverTimestamp() });
+  b.update(doc(db, "users/newbie"), { familyId: "famN" });
+  await assertFails(b.commit());
+});
+test("hanya admin yang dapat menyetujui akun; admin tidak dapat menyetujui dirinya lewat jalur ini", async () => {
+  const review = { approvalStatus: "approved", reviewedBy: "alice", reviewedAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(as("bob"), "users/newbie"), { ...review, reviewedBy: "bob" }));
+  await assertSucceeds(updateDoc(doc(as("alice"), "users/newbie"), review));
+  await assertFails(updateDoc(doc(as("alice"), "users/alice"), review));
+});
+test("daftar admin tidak dapat dibaca atau ditulis pengguna biasa", async () => {
+  await assertSucceeds(getDoc(doc(as("alice"), "admins/alice")));
+  await assertFails(setDoc(doc(as("bob"), "admins/bob"), { enabled: true }));
+  await assertFails(getDoc(doc(as("bob"), "admins/alice")));
 });

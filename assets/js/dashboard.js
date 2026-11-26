@@ -1,4 +1,4 @@
-import { state, subscribe, catName } from "./store.js";
+import { state, subscribe, catName, personName } from "./store.js";
 import { periodTotals, mainBalanceThrough, totalSavings, topCategory, budgetStatus } from "./balance.js";
 import { budgetRows } from "./budget.js";
 import { chartHost, barConfig, lineConfig, doughnutConfig } from "./charts.js";
@@ -97,7 +97,7 @@ export function mountDashboard(el, ctx) {
       </div>
       <div class="list-grid">
         <section class="card"><h2>Transaksi terbaru</h2>${recent.length ? `<ul class="plain-list">${recent.map((e) => `<li class="row-between">
-          <span><strong>${escapeHtml(e.name)}</strong><span class="muted small block">${formatDateStr(e.date)}, ${escapeHtml(e.createdByName || "")}</span></span>${amountCell(e)}</li>`).join("")}</ul>`
+          <span><strong>${escapeHtml(e.name)}</strong><span class="muted small block">${formatDateStr(e.date)}, ${escapeHtml(personName(e.createdBy, e.createdByName))}</span></span>${amountCell(e)}</li>`).join("")}</ul>`
           : emptyState("Belum ada transaksi", "Mulai dengan tombol + di pojok layar.")}</section>
         <section class="card"><h2>Aktivitas pasangan</h2>${noteList(partner, "Belum ada aktivitas dari pasangan.")}</section>
         <section class="card"><h2>Notifikasi terbaru</h2>${noteList(latest, "Belum ada notifikasi.")}</section>

@@ -1,5 +1,5 @@
 // Daftar transaksi (pemasukan, pengeluaran, atau seluruh riwayat) + form tambah/ubah/hapus.
-import { state, subscribe, catName, goalName } from "./store.js";
+import { state, subscribe, catName, goalName, personName } from "./store.js";
 import {
   addEntry, updateEntry, deleteEntry, ledgerErrorMessage, PAYMENT_METHODS, TYPE_LABEL,
 } from "./ledger.js";
@@ -103,7 +103,7 @@ export function openDetail(e) {
     ["Nominal", formatRupiah(e.amount)],
     ...(e.paymentMethod ? [["Metode pembayaran", e.paymentMethod]] : []),
     ["Keterangan", e.description || "-"],
-    ["Dicatat oleh", e.createdByName || "-"],
+    ["Dicatat oleh", personName(e.createdBy, e.createdByName) || "-"],
     ["Dicatat pada", e.createdAt?.toDate ? formatDateTime(e.createdAt.toDate()) : "-"],
     ["Terakhir diubah", e.updatedAt?.toDate ? formatDateTime(e.updatedAt.toDate()) : "-"],
   ];
@@ -157,7 +157,7 @@ export function mountTransactions(el, ctx, { mode }) {
       if (f.cat && e.categoryId !== f.cat) return false;
       if (f.user && e.createdBy !== f.user) return false;
       if (q) {
-        const hay = [e.name, e.description, e.categoryId ? catName(e.categoryId) : "", e.createdByName, TYPE_LABEL[e.type]].join(" ").toLowerCase();
+        const hay = [e.name, e.description, e.categoryId ? catName(e.categoryId) : "", personName(e.createdBy, e.createdByName), TYPE_LABEL[e.type]].join(" ").toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -176,7 +176,7 @@ export function mountTransactions(el, ctx, { mode }) {
         <div class="tx-date">${formatDateStr(e.date)}</div>
         <div class="tx-main"><strong>${escapeHtml(e.name)}</strong>
           <span class="tx-sub">${mode === "all" ? `<span class="pill">${TYPE_LABEL[e.type]}</span>` : ""}${detailLine(e)}</span></div>
-        <div class="tx-user muted">${escapeHtml(e.createdByName || "")}</div>
+        <div class="tx-user muted">${escapeHtml(personName(e.createdBy, e.createdByName))}</div>
         <div class="tx-amt">${amountCell(e)}</div>
         <div class="tx-act">
           <button class="btn-link" data-act="detail">Detail</button>
@@ -206,7 +206,7 @@ export function mountTransactions(el, ctx, { mode }) {
     downloadCsv(`transaksi-${todayJakarta()}.csv`, [
       ["Tanggal", "Jenis", "Nama", "Kategori", "Nominal", "Metode pembayaran", "Dicatat oleh", "Keterangan"],
       ...rows.map((e) => [formatDateStr(e.date), TYPE_LABEL[e.type], e.name, e.categoryId ? catName(e.categoryId) : "",
-        e.amount, e.paymentMethod || "", e.createdByName || "", e.description || ""]),
+        e.amount, e.paymentMethod || "", personName(e.createdBy, e.createdByName), e.description || ""]),
     ]);
   });
 

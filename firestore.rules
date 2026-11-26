@@ -10,6 +10,13 @@ service cloud.firestore {
     function famPath(fid) { return /databases/$(database)/documents/families/$(fid); }
     function memberPath(fid, uid) { return /databases/$(database)/documents/families/$(fid)/members/$(uid); }
     function invitePath(code) { return /databases/$(database)/documents/invites/$(code); }
+    function adminPath(uid) { return /databases/$(database)/documents/admins/$(uid); }
+    // Admin = pemilik aplikasi; dokumen admins/{uid} hanya dapat dibuat lewat Firebase Console.
+    function isAdmin() { return signedIn() && exists(adminPath(request.auth.uid)); }
+    // Akun lama (tanpa field approvalStatus) dianggap sudah disetujui; admin selalu dianggap disetujui.
+    function isApproved(uid) {
+      return exists(adminPath(uid)) || get(userPath(uid)).data.get('approvalStatus', 'approved') == 'approved';
+    }
     function catPath(fid, id) { return /databases/$(database)/documents/families/$(fid)/categories/$(id); }
     function goalPath(fid, id) { return /databases/$(database)/documents/families/$(fid)/savingsGoals/$(id); }
 
@@ -37,19 +44,41 @@ service cloud.firestore {
     // Profil pengguna
     // =====================================================================
     match /users/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow create: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['displayName', 'email', 'familyId', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'familyId', 'approvalStatus', 'createdAt'])
         && shortText(request.resource.data.displayName, 60)
         && request.resource.data.displayName.size() >= 2
         && request.resource.data.familyId == null
+        && request.resource.data.approvalStatus == 'pending'
         && request.resource.data.createdAt == request.time;
-      // familyId hanya boleh diisi sekali, dan hanya jika keanggotaannya dibuat pada batch yang sama.
-      allow update: if signedIn() && request.auth.uid == uid
-        && changedOnly(['familyId'])
-        && resource.data.familyId == null
-        && safeId(request.resource.data.familyId)
-        && existsAfter(memberPath(request.resource.data.familyId, uid));
+      allow update: if signedIn() && request.auth.uid == uid && (
+        // Bergabung/membuat keluarga: familyId diisi sekali, hanya jika keanggotaannya dibuat pada batch yang sama.
+        (changedOnly(['familyId'])
+          && resource.data.familyId == null
+          && safeId(request.resource.data.familyId)
+          && existsAfter(memberPath(request.resource.data.familyId, uid)))
+        ||
+        // Keluar dari keluarga, atau pemulihan setelah dikeluarkan: familyId dikosongkan hanya jika
+        // pengguna sudah/akan tidak tercatat sebagai anggota keluarga itu.
+        (changedOnly(['familyId'])
+          && safeId(resource.data.familyId)
+          && request.resource.data.familyId == null
+          && !existsAfter(memberPath(resource.data.familyId, uid)))
+        ||
+        // Ganti nama: wajib diikuti perubahan nama pada data anggota dalam batch yang sama.
+        (changedOnly(['displayName'])
+          && shortText(request.resource.data.displayName, 60)
+          && request.resource.data.displayName.size() >= 2
+          && (resource.data.familyId == null
+              || getAfter(memberPath(resource.data.familyId, uid)).data.displayName == request.resource.data.displayName))
+      );
+      // Peninjauan akun baru oleh admin. Pengguna tidak dapat mengubah approvalStatus dirinya (tidak ada di daftar changedOnly di atas).
+      allow update: if isAdmin() && request.auth.uid != uid
+        && changedOnly(['approvalStatus', 'reviewedBy', 'reviewedAt'])
+        && request.resource.data.approvalStatus in ['approved', 'rejected']
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.reviewedAt == request.time;
       allow delete: if false;
     }
 
@@ -61,20 +90,23 @@ service cloud.firestore {
 
       allow create: if signedIn()
         && get(userPath(request.auth.uid)).data.familyId == null
+        && isApproved(request.auth.uid)
         && request.resource.data.keys().hasOnly(
-             ['name', 'currency', 'timezone', 'ownerUid', 'inviteCode', 'memberCount', 'createdAt'])
+             ['name', 'currency', 'timezone', 'ownerUid', 'inviteCode', 'memberCount', 'partnerUid', 'createdAt'])
         && request.resource.data.ownerUid == request.auth.uid
         && shortText(request.resource.data.name, 60)
         && request.resource.data.name.size() >= 2
         && request.resource.data.currency == 'IDR'
         && request.resource.data.timezone == 'Asia/Jakarta'
         && request.resource.data.memberCount == 1
+        && request.resource.data.partnerUid == null
         && request.resource.data.inviteCode is string
         && request.resource.data.inviteCode.matches('^[A-Z0-9]{8}$')
         && request.resource.data.createdAt == request.time
         && existsAfter(memberPath(familyId, request.auth.uid));
 
       allow update: if (
+          // A. Pemilik: ganti nama atau kode undangan.
           isOwner(familyId)
           && changedOnly(['name', 'inviteCode'])
           && shortText(request.resource.data.name, 60)
@@ -82,20 +114,51 @@ service cloud.firestore {
           && request.resource.data.inviteCode is string
           && request.resource.data.inviteCode.matches('^[A-Z0-9]{8}$')
         ) || (
-          // Pasangan bergabung: hanya menaikkan memberCount dari 1 ke 2 (batas dua anggota).
+          // B. Pasangan bergabung: hanya dari 1 ke 2 anggota (batas dua anggota), dan mencatat dirinya sebagai partner.
           signedIn()
           && !exists(memberPath(familyId, request.auth.uid))
-          && changedOnly(['memberCount'])
+          && changedOnly(['memberCount', 'partnerUid'])
           && resource.data.memberCount == 1
+          && resource.data.get('partnerUid', null) == null
           && request.resource.data.memberCount == 2
+          && request.resource.data.partnerUid == request.auth.uid
           && existsAfter(memberPath(familyId, request.auth.uid))
           && getAfter(memberPath(familyId, request.auth.uid)).data.role == 'member'
+        ) || (
+          // C. Pasangan keluar sendiri: data anggotanya dihapus pada batch yang sama.
+          isMember(familyId)
+          && changedOnly(['memberCount', 'partnerUid'])
+          && resource.data.get('partnerUid', null) == request.auth.uid
+          && resource.data.memberCount == 2
+          && request.resource.data.memberCount == 1
+          && request.resource.data.partnerUid == null
+          && !existsAfter(memberPath(familyId, request.auth.uid))
+        ) || (
+          // D. Pemilik mengeluarkan pasangan: data anggota pasangan dihapus pada batch yang sama.
+          isOwner(familyId)
+          && changedOnly(['memberCount', 'partnerUid'])
+          && resource.data.get('partnerUid', null) is string
+          && resource.data.memberCount == 2
+          && request.resource.data.memberCount == 1
+          && request.resource.data.partnerUid == null
+          && !existsAfter(memberPath(familyId, resource.data.partnerUid))
+        ) || (
+          // E. Melengkapi partnerUid pada keluarga lama (dibuat sebelum field ini ada).
+          isMember(familyId)
+          && changedOnly(['partnerUid'])
+          && resource.data.get('partnerUid', null) == null
+          && resource.data.memberCount == 2
+          && safeId(request.resource.data.partnerUid)
+          && request.resource.data.partnerUid != resource.data.ownerUid
+          && exists(memberPath(familyId, request.resource.data.partnerUid))
         );
       allow delete: if false;
 
       // ---------- Anggota ----------
       match /members/{memberUid} {
         allow read: if isMember(familyId);
+        // Pengguna boleh memeriksa keanggotaannya sendiri (untuk mendeteksi bila sudah dikeluarkan).
+        allow get: if signedIn() && request.auth.uid == memberUid;
         allow create: if signedIn() && request.auth.uid == memberUid
           && request.resource.data.keys().hasOnly(
                ['uid', 'displayName', 'role', 'status', 'joinedAt', 'inviteCode'])
@@ -104,6 +167,7 @@ service cloud.firestore {
           && request.resource.data.joinedAt == request.time
           && request.resource.data.displayName == get(userPath(memberUid)).data.displayName
           && get(userPath(memberUid)).data.familyId == null
+          && isApproved(memberUid)
           && (
             (request.resource.data.role == 'owner'
               && !exists(famPath(familyId))
@@ -117,7 +181,20 @@ service cloud.firestore {
               && get(famPath(familyId)).data.memberCount == 1
               && getAfter(famPath(familyId)).data.memberCount == 2)
           );
-        allow update, delete: if false; // role tidak dapat diubah
+        // Role tidak dapat diubah. Satu-satunya perubahan: nama sendiri, yang harus sama dengan profil (batch yang sama).
+        allow update: if isMember(familyId)
+          && request.auth.uid == memberUid
+          && changedOnly(['displayName'])
+          && shortText(request.resource.data.displayName, 60)
+          && request.resource.data.displayName.size() >= 2
+          && request.resource.data.displayName == getAfter(userPath(memberUid)).data.displayName;
+        // Hapus: anggota keluar sendiri atau pemilik mengeluarkan anggota. Pemilik tidak dapat dihapus.
+        // Batch yang sama wajib menurunkan memberCount ke 1 dan mengosongkan partnerUid.
+        allow delete: if isMember(familyId)
+          && get(memberPath(familyId, memberUid)).data.role == 'member'
+          && (memberUid == request.auth.uid || isOwner(familyId))
+          && getAfter(famPath(familyId)).data.memberCount == 1
+          && getAfter(famPath(familyId)).data.get('partnerUid', null) == null;
       }
 
       // ---------- Kategori ----------
@@ -292,7 +369,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(
                ['action', 'entityType', 'entityId', 'summary', 'before', 'after', 'actorUid', 'actorName', 'createdAt'])
           && request.resource.data.action in ['create', 'update', 'delete']
-          && request.resource.data.entityType in ['ledger', 'budget', 'savingsGoal']
+          && request.resource.data.entityType in ['ledger', 'budget', 'savingsGoal', 'member']
           && request.resource.data.entityId is string
           && request.resource.data.summary is string && request.resource.data.summary.size() <= 300
           && (request.resource.data.before == null || request.resource.data.before is map)
@@ -302,13 +379,31 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }
+
+      // ---------- Token push perangkat ----------
+      // Hanya pemilik token yang dapat membaca/menulisnya. Server (Admin SDK) membaca semuanya untuk mengirim push,
+      // dan hanya mengirim ke anggota aktif keluarga.
+      match /pushTokens/{tokenId} {
+        allow read: if isMember(familyId) && resource.data.uid == request.auth.uid;
+        allow create: if isMember(familyId)
+          && request.resource.data.keys().hasOnly(['token', 'uid', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.token is string
+          && request.resource.data.token.size() > 0 && request.resource.data.token.size() <= 4096
+          && request.resource.data.updatedAt == request.time;
+        allow update: if isMember(familyId)
+          && resource.data.uid == request.auth.uid
+          && changedOnly(['updatedAt'])
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if isMember(familyId) && resource.data.uid == request.auth.uid;
+      }
     }
 
     // =====================================================================
     // Undangan keluarga
     // =====================================================================
     match /invites/{code} {
-      allow get: if signedIn();      // perlu mengetahui kodenya
+      allow get: if signedIn() && isApproved(request.auth.uid);      // perlu mengetahui kodenya
       allow list: if false;          // daftar undangan tidak dapat ditelusuri
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['familyId', 'active', 'createdBy', 'createdAt'])
@@ -330,6 +425,14 @@ service cloud.firestore {
           && existsAfter(memberPath(resource.data.familyId, request.auth.uid)))
       );
       allow delete: if false;
+    }
+
+    // =====================================================================
+    // Daftar admin: pengguna hanya dapat memeriksa apakah dirinya admin. Penulisan hanya lewat Console.
+    // =====================================================================
+    match /admins/{adminId} {
+      allow get: if signedIn() && request.auth.uid == adminId;
+      allow list, write: if false;
     }
 
     // Selain yang tercantum di atas: ditolak.
