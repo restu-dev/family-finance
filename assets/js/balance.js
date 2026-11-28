@@ -1,6 +1,6 @@
 // Perhitungan keuangan MURNI (tanpa Firebase/DOM) agar mudah diuji.
 // Sumber kebenaran: daftar entri ledger. Semua saldo dihitung dari sini, tidak pernah disimpan sebagai angka bebas.
-import { monthStart, monthEnd, addMonths, monthLabel, formatRupiah, formatDateStr, addDays, weekStart } from "./utils.js";
+import { monthStart, monthEnd, addMonths, monthLabel, shortMonthLabel, formatRupiah, formatDateStr, addDays, weekStart } from "./utils.js";
 
 export const isActive = (e) => e.status !== "deleted";
 
@@ -187,3 +187,67 @@ export function buildReport(entries, kind, from, to, catName) {
     totals: rows.length ? ["Total", sum(1), sum(2), sum(3), sum(4), sum(5)] : null };
 }
 
+
+
+// Label status anggaran. Tepat 100% = anggaran habis (belum melewati batas); di atas 100% = melewati batas.
+export function budgetLabel(st) {
+  if (st.pct > 100) return "Melewati batas";
+  if (st.pct === 100) return "Anggaran habis";
+  return { green: "Aman", yellow: "Waspada", orange: "Hampir habis" }[st.level];
+}
+
+// ---------- Dana darurat ----------
+// Rata-rata pengeluaran bulanan dari hingga n bulan penuh terakhir. Bulan pertama data dikecualikan karena
+// biasanya belum penuh (pengguna mulai di tengah bulan). Bila belum ada bulan penuh, dipakai bulan berjalan (perkiraan awal).
+export function avgMonthlyExpense(entries, today, n = 3) {
+  const act = entries.filter(isActive);
+  if (!act.length) return { avg: 0, months: [], basis: "none" };
+  const cm = today.slice(0, 7);
+  const start = act.reduce((m, e) => (e.date < m ? e.date : m), act[0].date).slice(0, 7);
+  const months = [];
+  for (let i = n; i >= 1; i--) { const m = addMonths(cm, -i); if (m > start) months.push(m); }
+  if (months.length) {
+    const total = months.reduce((s, m) => s + periodTotals(entries, monthStart(m), monthEnd(m)).expense, 0);
+    return { avg: Math.round(total / months.length), months, basis: "full" };
+  }
+  const cur = periodTotals(entries, monthStart(cm), today).expense;
+  return cur > 0 ? { avg: cur, months: [cm], basis: "partial" } : { avg: 0, months: [], basis: "none" };
+}
+
+// Ketahanan dana darurat = saldo pos yang ditandai dana darurat / rata-rata pengeluaran bulanan.
+export function emergencyCoverage({ entries, goals, today }) {
+  const flagged = goals.filter((g) => g.isEmergency === true && g.status !== "archived");
+  const bal = savingsBalances(entries, today);
+  const fund = flagged.reduce((s, g) => s + (bal[g.id] || 0), 0);
+  const { avg, months, basis } = avgMonthlyExpense(entries, today);
+  return {
+    flagged: flagged.length, fund, avg, basis, usedMonths: months,
+    coverage: flagged.length > 0 && avg > 0 ? fund / avg : null,
+    needed3: avg * 3, needed6: avg * 6,
+    short3: Math.max(0, avg * 3 - fund), short6: Math.max(0, avg * 6 - fund),
+  };
+}
+
+export const formatMonths = (v) => (v >= 100 ? "lebih dari 99" : (Math.round(v * 10) / 10).toString().replace(".", ","));
+
+export function emergencyText(c) {
+  if (!c.flagged) return "Belum ada pos tabungan yang ditandai sebagai dana darurat.";
+  if (!(c.avg > 0)) return `Dana darurat ${formatRupiah(c.fund)}. Belum cukup data pengeluaran untuk menghitung ketahanannya.`;
+  const basis = c.basis === "partial"
+    ? " Perkiraan awal: baru ada data bulan berjalan."
+    : ` Dihitung dari rata-rata ${c.usedMonths.length} bulan terakhir (${c.usedMonths.map(shortMonthLabel).join(", ")}).`;
+  return `Dana darurat ${formatRupiah(c.fund)} cukup untuk sekitar ${formatMonths(c.coverage)} bulan pengeluaran (rata-rata ${formatRupiah(c.avg)} per bulan).${basis}`;
+}
+
+export function emergencyShort(c) {
+  if (!c.flagged) return "Tandai pos tabungan sebagai dana darurat di menu Tabungan";
+  if (!(c.avg > 0)) return "Belum cukup data pengeluaran";
+  return `Rata-rata pengeluaran ${formatRupiah(c.avg)} per bulan${c.basis === "partial" ? " (perkiraan awal)" : ""}`;
+}
+
+// Acuan umum perencanaan keuangan: dana darurat setara 3 sampai 6 bulan pengeluaran.
+export function emergencyGuide(c) {
+  if (!c.flagged || !(c.avg > 0)) return "";
+  const gap = c.short3 > 0 ? `Kurang ${formatRupiah(c.short3)} untuk mencapai 3 bulan.` : c.short6 > 0 ? `Kurang ${formatRupiah(c.short6)} untuk mencapai 6 bulan.` : "Sudah melewati 6 bulan pengeluaran.";
+  return `Acuan umum: 3 sampai 6 bulan pengeluaran, yaitu ${formatRupiah(c.needed3)} sampai ${formatRupiah(c.needed6)}. ${gap}`;
+}

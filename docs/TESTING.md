@@ -2,7 +2,7 @@
 
 ## A. Otomatis (sudah dijalankan saat pembuatan)
 
-`npm test` menjalankan tes logika murni (`tests/`): rumus saldo, pergantian bulan, transaksi terlambat, koreksi dan hapus, tabungan tanpa penghitungan ganda, indikator anggaran 75/90/100, penentuan peringatan tanpa pengulangan, analisis otomatis, laporan periodik, CSV, utilitas tanggal. `npm run test:integration` menjalankan `ledger.js` dan `store.js` sungguhan dengan Firestore palsu: batch atomis (ledger + log audit + notifikasi), validasi input, pengiriman ulang tanpa duplikat, perilaku offline, peringatan anggaran 75/90/100% tepat sekali per ambang (termasuk teks pesan), edit/hapus, setoran dan transfer tabungan, target tercapai. `tests/integration/members.test.mjs` menguji komposisi atomis aksi keluar, keluarkan, ganti nama, pelengkapan `partnerUid`, dan pemulihan keanggotaan. `tests/integration/approvals.test.mjs` menguji status awal pendaftaran (pending), tindakan setujui/tolak, dan pemeriksaan admin. `npm run check` memeriksa konsistensi impor antarmodul.
+`npm test` menjalankan tes logika murni (`tests/`): rumus saldo, pergantian bulan, transaksi terlambat, koreksi dan hapus, tabungan tanpa penghitungan ganda, indikator anggaran 75/90/100, penentuan peringatan tanpa pengulangan, analisis otomatis, laporan periodik, CSV, utilitas tanggal. `npm run test:integration` menjalankan `ledger.js` dan `store.js` sungguhan dengan Firestore palsu: batch atomis (ledger + log audit + notifikasi), validasi input, pengiriman ulang tanpa duplikat, perilaku offline, peringatan anggaran 75/90/100% tepat sekali per ambang (termasuk teks pesan), edit/hapus, setoran dan transfer tabungan, target tercapai. `tests/integration/members.test.mjs` menguji komposisi atomis aksi keluar, keluarkan, ganti nama, pelengkapan `partnerUid`, dan pemulihan keanggotaan. `tests/integration/approvals.test.mjs` menguji status awal pendaftaran (pending), tindakan setujui/tolak, dan pemeriksaan admin. `tests/monthly-report.test.mjs` menguji isi dan keamanan HTML laporan bulanan (angka kunci, transaksi bulan lain dan yang dihapus tidak ikut, teks berbahaya di-escape). Tes di `tests/balance.test.mjs` juga mencakup label anggaran (100% = habis) dan hitungan dana darurat. `npm run check` memeriksa konsistensi impor antarmodul.
 
 ## B. Tes Security Rules (BELUM dijalankan, butuh emulator)
 
@@ -55,3 +55,13 @@ Sebelum mulai: publish ulang `firestore.rules`, buat dokumen `admins/{UID Anda}`
 5. Daftarkan email baru lagi, **Tolak**: layar pendaftar berubah menjadi "tidak disetujui". Klik **Setujui** pada daftar Sudah diproses: pendaftar bisa lanjut.
 6. Akun non-admin tidak melihat menu Persetujuan akun, dan membuka `#persetujuan` mengarah ke Dashboard.
 7. Akun lama Anda dan istri (yang dibuat sebelum fitur ini) tetap bisa masuk seperti biasa.
+
+## F. Dana darurat, PDF, dan label anggaran (WAJIB diuji pemilik; belum diuji di browser)
+
+Publish ulang `firestore.rules` terlebih dahulu (ada field baru `isEmergency` pada pos tabungan).
+
+1. **Anggaran tepat 100%:** buat anggaran Rp100.000 untuk satu kategori, catat pengeluaran tepat Rp100.000. Status di menu Anggaran: **Anggaran habis**, merah, dan notifikasi "sudah mencapai 100% ... Sisa Rp0". Tambah Rp1.000: status **Melewati batas** dan banner "sudah melewati batas ... Melebihi anggaran Rp1.000".
+2. **Dana darurat:** Tabungan > ubah pos Dana darurat > centang Tandai sebagai dana darurat. Muncul pil "Dana darurat" di kartu. Dengan data pengeluaran minimal satu bulan penuh sebelumnya, Dashboard dan halaman Tabungan menampilkan perkiraan bulan. Cek angkanya manual: saldo pos dibagi rata-rata pengeluaran bulanan (tanpa setoran tabungan).
+3. **Tanpa pos bertanda:** hapus centang. Dashboard menampilkan "-" dan petunjuk menandai pos.
+4. **PDF:** Laporan > Ringkasan > Cetak laporan PDF > Cetak / simpan PDF > Simpan sebagai PDF. Periksa: angka sama dengan layar Laporan, daftar transaksi lengkap, tabel tidak terpotong di tengah baris, halaman dan menu aplikasi tidak ikut tercetak, nama berkas berawalan "Laporan <bulan> <tahun>". Coba juga di HP.
+5. **Bulan kosong:** pilih bulan tanpa data lalu cetak: laporan tetap terbentuk dengan keterangan "Tidak ada ...".

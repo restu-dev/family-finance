@@ -324,19 +324,20 @@ service cloud.firestore {
             && isDateStr(d.startDate)
             && (d.targetDate == '' || isDateStr(d.targetDate))
             && d.description is string && d.description.size() <= 300
-            && d.status in ['active', 'achieved', 'archived'];
+            && d.status in ['active', 'achieved', 'archived']
+            && d.get('isEmergency', false) is bool;
         }
         allow read: if isMember(familyId);
         allow create: if isMember(familyId)
           && request.resource.data.keys().hasOnly(
-               ['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+               ['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'isEmergency', 'status', 'createdBy', 'createdAt', 'updatedAt'])
           && validGoal(request.resource.data)
           && request.resource.data.status == 'active'
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.createdAt == request.time
           && request.resource.data.updatedAt == request.time;
         allow update: if isMember(familyId)
-          && changedOnly(['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'status', 'updatedAt'])
+          && changedOnly(['name', 'targetAmount', 'startDate', 'targetDate', 'description', 'isEmergency', 'status', 'updatedAt'])
           && validGoal(request.resource.data)
           && request.resource.data.updatedAt == request.time;
         allow delete: if false; // hanya diarsipkan

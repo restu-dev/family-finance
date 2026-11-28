@@ -129,3 +129,21 @@ test("penghapusan setoran yang membuat saldo pos negatif ditolak", async () => {
   await L.addEntry(ctx, { id: "w2", type: "savings_withdraw", date: TODAY, name: "x", amount: 400000, savingsId: "g1" });
   await assert.rejects(L.deleteEntry(ctx, state.ledger.find((x) => x.id === "d3")), /negatif/);
 });
+
+test("pengeluaran melampaui anggaran: pesan 'melewati batas', bukan 'mencapai'", async () => {
+  await L.saveBudget(ctx, { monthId: MONTH, categoryId: "exp_dapur", limitAmount: 1000000, thresholds: [75, 90, 100] });
+  await L.addEntry(ctx, expense("o1", 1200000));
+  const alerts = state.notifications.filter((n) => n.type === "budget").map((n) => n.message);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0], "Anggaran Belanja dapur sudah melewati batas. Pengeluaran Rp1.200.000 dari anggaran Rp1.000.000. Melebihi anggaran Rp200.000.");
+});
+
+test("pos tabungan menyimpan penanda dana darurat", async () => {
+  await L.saveGoal(ctx, { name: "Dana darurat", targetAmount: 10000000, startDate: TODAY, targetDate: "", description: "", isEmergency: true });
+  const op = commits[0].find(([o, p]) => o === "set" && p.includes("savingsGoals"));
+  assert.equal(op[2].isEmergency, true);
+  assert.equal(op[2].status, "active");
+  await L.saveGoal(ctx, { name: "Liburan", targetAmount: 5000000, startDate: TODAY });
+  const op2 = commits[1].find(([o, p]) => o === "set" && p.includes("savingsGoals"));
+  assert.equal(op2[2].isEmergency, false);
+});

@@ -14,7 +14,7 @@ Nominal selalu **bilangan bulat rupiah**. Tanggal transaksi disimpan sebagai str
 | `.../ledger/{entryId}` | UUID dari form (anti duplikat) | `familyId`, `type`, `date`, `monthId`, `name`, `categoryId`, `amount`, `paymentMethod`, `description`, `savingsId`, `toSavingsId`, `status` (active/deleted), `createdBy`, `createdByName`, `createdAt`, `updatedBy`, `updatedAt` |
 | `.../budgets/{monthId_categoryId}` | `YYYY-MM_kategori` | `monthId`, `categoryId`, `limitAmount`, `thresholds` (subset 75/90/100), `createdBy`, `createdAt`, `updatedAt` |
 | `.../budgetAlerts/{kategori_bulan_ambang}` | deterministik | `categoryId`, `monthId`, `threshold`, `createdBy`, `createdAt` (hanya create) |
-| `.../savingsGoals/{savingsId}` | otomatis | `name`, `targetAmount`, `startDate`, `targetDate` ("" bila kosong), `description`, `status` (active/achieved/archived), `createdBy`, `createdAt`, `updatedAt` |
+| `.../savingsGoals/{savingsId}` | otomatis | `name`, `targetAmount`, `startDate`, `targetDate` ("" bila kosong), `description`, `isEmergency` (true bila ditandai dana darurat; pos lama tanpa field dianggap false), `status` (active/achieved/archived), `createdBy`, `createdAt`, `updatedAt` |
 | `.../notifications/{id}` | otomatis | `type`, `message`, `actorUid`, `actorName`, `readBy` ({uid: true}), `createdAt` |
 | `.../pushTokens/{sha256(token)}` | hash token FCM | `token`, `uid`, `updatedAt` (hanya terbaca oleh pemiliknya; server membaca semuanya) |
 | `.../activityLogs/{id}` | otomatis | `action`, `entityType` (ledger/budget/savingsGoal/member), `entityId`, `summary`, `before`, `after`, `actorUid`, `actorName`, `createdAt` (append-only) |

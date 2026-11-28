@@ -1,4 +1,5 @@
-import { state, subscribe, catName } from "./store.js";
+import { state, subscribe, catName, goalName, personName } from "./store.js";
+import { buildMonthlyReport, renderMonthlyReportHtml } from "./monthly-report.js";
 import { monthSummary, periodTotals, totalSavings, analyze, buildReport } from "./balance.js";
 import { budgetRows } from "./budget.js";
 import { mountTransactions } from "./transactions.js";
@@ -9,11 +10,42 @@ import {
   shortMonthLabel, downloadCsv,
 } from "./utils.js";
 
-function summaryTab(el) {
+// Tampilan cetak: laporan bulanan dirender di atas halaman, lalu dicetak lewat dialog cetak browser
+// (pilih "Simpan sebagai PDF"). Seluruh isi halaman lain disembunyikan saat mencetak (lihat CSS @media print).
+function openPrintView(ctx, month) {
+  const data = buildMonthlyReport({
+    entries: state.ledger, month, budgets: state.budgets, goals: state.goals, catName, goalName, personName,
+    familyName: state.family?.name, preparedBy: ctx.profile.displayName,
+  });
+  const root = document.createElement("div");
+  root.id = "print-root";
+  root.innerHTML = `<div class="print-toolbar no-print">
+      <button class="btn btn-primary" id="pr-print">Cetak / simpan PDF</button>
+      <button class="btn btn-ghost" id="pr-close">Tutup</button>
+      <p class="muted small">Di jendela cetak, pilih Simpan sebagai PDF sebagai printer. Grafik tidak disertakan; isinya tabel.</p></div>
+    <article class="rpt">${renderMonthlyReportHtml(data)}</article>`;
+  const oldTitle = document.title;
+  const onKey = (ev) => { if (ev.key === "Escape") close(); };
+  function close() {
+    root.remove(); document.body.classList.remove("printing"); document.title = oldTitle; document.removeEventListener("keydown", onKey);
+  }
+  document.body.appendChild(root);
+  document.body.classList.add("printing");
+  document.addEventListener("keydown", onKey);
+  root.querySelector("#pr-close").addEventListener("click", close);
+  root.querySelector("#pr-print").addEventListener("click", () => {
+    document.title = `${data.title} - Family Finance`; // dipakai browser sebagai nama berkas PDF
+    window.print();
+    setTimeout(() => { document.title = oldTitle; }, 500);
+  });
+}
+
+function summaryTab(el, ctx) {
   const charts = chartHost();
   let month = todayJakarta().slice(0, 7);
   el.innerHTML = `<div class="toolbar"><div class="month-nav"><button class="btn btn-ghost" id="r-prev" aria-label="Bulan sebelumnya">&lsaquo;</button>
-    <strong id="r-label"></strong><button class="btn btn-ghost" id="r-next" aria-label="Bulan berikutnya">&rsaquo;</button></div></div>
+    <strong id="r-label"></strong><button class="btn btn-ghost" id="r-next" aria-label="Bulan berikutnya">&rsaquo;</button></div>
+      <button class="btn btn-primary" id="r-print">Cetak laporan PDF</button></div>
     <section class="card stack"><h2>Analisis otomatis</h2><ul class="plain-list" id="r-analysis"></ul></section>
     <div class="chart-grid wide">
       ${[["r-inc", "Pemasukan bulanan"], ["r-exp", "Pengeluaran bulanan"], ["r-cmp", "Perbandingan pemasukan dan pengeluaran"],
@@ -46,6 +78,7 @@ function summaryTab(el) {
   }
   $("#r-prev").addEventListener("click", () => { month = addMonths(month, -1); render(); });
   $("#r-next").addEventListener("click", () => { month = addMonths(month, 1); render(); });
+  $("#r-print").addEventListener("click", () => openPrintView(ctx, month));
   render();
   const off = subscribe(render);
   return () => { off(); charts.destroy(); };
@@ -91,7 +124,7 @@ export function mountReports(el, ctx) {
   function show() {
     cleanup?.(); cleanup = null;
     el.querySelectorAll(".tab").forEach((b) => { b.classList.toggle("active", b.dataset.tab === tab); b.setAttribute("aria-selected", b.dataset.tab === tab); });
-    if (tab === "ringkasan") cleanup = summaryTab(content);
+    if (tab === "ringkasan") cleanup = summaryTab(content, ctx);
     else if (tab === "laporan") cleanup = tableTab(content);
     else cleanup = mountTransactions(content, ctx, { mode: "all" });
   }

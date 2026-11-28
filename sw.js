@@ -2,13 +2,13 @@
 // - File aplikasi (same-origin): network-first, cadangan dari cache, agar pembaruan selalu sampai.
 // - Pustaka/font dari CDN: stale-while-revalidate.
 // - Firestore/Auth API tidak disentuh sama sekali: data keuangan hanya berasal dari Firebase.
-const VERSION = "ff-v3";
+const VERSION = "ff-v4";
 const SHELL = [
   "./", "index.html", "login.html", "register.html", "offline.html", "manifest.json",
   "assets/css/style.css", "assets/css/responsive.css",
   "assets/js/app.js", "assets/js/approvals.js", "assets/js/auth.js", "assets/js/auth-pages.js", "assets/js/balance.js", "assets/js/budget.js",
   "assets/js/charts.js", "assets/js/dashboard.js", "assets/js/expense.js", "assets/js/family.js", "assets/js/firebase.js",
-  "assets/js/firebase-config.js", "assets/js/income.js", "assets/js/ledger.js", "assets/js/members.js", "assets/js/notifications.js", "assets/js/push.js",
+  "assets/js/firebase-config.js", "assets/js/income.js", "assets/js/ledger.js", "assets/js/monthly-report.js", "assets/js/members.js", "assets/js/notifications.js", "assets/js/push.js",
   "assets/js/onboarding.js", "assets/js/reports.js", "assets/js/savings.js", "assets/js/settings.js", "assets/js/store.js",
   "assets/js/transactions.js", "assets/js/ui.js", "assets/js/utils.js",
   "assets/images/icon-192.png", "assets/images/icon-512.png",

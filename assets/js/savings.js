@@ -1,6 +1,6 @@
 import { state, subscribe, goalName, personName } from "./store.js";
 import { saveGoal, setGoalStatus, addEntry, ledgerErrorMessage } from "./ledger.js";
-import { savingsBalances, mainBalanceThrough } from "./balance.js";
+import { savingsBalances, mainBalanceThrough, emergencyCoverage, emergencyText, emergencyGuide } from "./balance.js";
 import { openModal, confirmModal, toast, setLoading, emptyState, bindAmountInput } from "./ui.js";
 import { escapeHtml, formatRupiah, formatDateStr, parseAmount, todayJakarta, uuid } from "./utils.js";
 import { openDetail } from "./transactions.js";
@@ -10,6 +10,7 @@ export function mountSavings(el, ctx) {
     <div class="toolbar"><div class="muted" id="s-main"></div>
       <button class="btn btn-ghost" id="s-transfer">Transfer antarpos</button>
       <button class="btn btn-primary" id="s-add">Tambah pos tabungan</button></div>
+    <p class="muted" id="s-emerg"></p>
     <div id="s-body"></div>`;
   const $ = (id) => el.querySelector(id);
   const activeGoals = () => state.goals.filter((g) => g.status !== "archived").sort((a, b) => a.name.localeCompare(b.name, "id"));
@@ -18,12 +19,14 @@ export function mountSavings(el, ctx) {
     const bal = savingsBalances(state.ledger);
     const total = Object.values(bal).reduce((a, b) => a + b, 0);
     $("#s-main").textContent = `Saldo utama ${formatRupiah(mainBalanceThrough(state.ledger, todayJakarta()))}. Total tabungan ${formatRupiah(total)}.`;
+    const ec = emergencyCoverage({ entries: state.ledger, goals: state.goals, today: todayJakarta() });
+    $("#s-emerg").textContent = `${emergencyText(ec)} ${emergencyGuide(ec)}`.trim();
     const goals = activeGoals();
     $("#s-body").innerHTML = goals.length ? `<div class="goal-grid">${goals.map((g) => {
       const b = bal[g.id] || 0, pct = Math.max(0, Math.min(100, (b * 100) / g.targetAmount));
       return `<section class="card goal" data-id="${escapeHtml(g.id)}">
         <div class="row-between"><strong>${escapeHtml(g.name)}</strong>
-          <span class="pill ${g.status === "achieved" ? "lvl-green" : ""}">${g.status === "achieved" ? "Tercapai" : "Aktif"}</span></div>
+          <span class="actions">${g.isEmergency ? `<span class="pill">Dana darurat</span>` : ""}<span class="pill ${g.status === "achieved" ? "lvl-green" : ""}">${g.status === "achieved" ? "Tercapai" : "Aktif"}</span></span></div>
         <div class="goal-amount">${formatRupiah(b)}</div>
         <div class="progress" role="progressbar" aria-valuenow="${Math.floor(pct)}" aria-valuemin="0" aria-valuemax="100"><span class="bar lvl-${pct >= 100 ? "green" : "blue"}" style="width:${pct}%"></span></div>
         <div class="muted small">${Math.floor(pct)}% dari target ${formatRupiah(g.targetAmount)}${g.targetDate ? `, target ${formatDateStr(g.targetDate)}` : ""}</div>
@@ -43,6 +46,7 @@ export function mountSavings(el, ctx) {
         <div class="field"><label for="g-start">Tanggal mulai</label><input id="g-start" type="date"></div>
         <div class="field"><label for="g-end">Tanggal target (opsional)</label><input id="g-end" type="date"></div>
         <div class="field"><label for="g-desc">Keterangan (opsional)</label><textarea id="g-desc" rows="2" maxlength="300"></textarea></div>
+        <label class="check"><input type="checkbox" id="g-emerg"> Tandai sebagai dana darurat</label>
         <div class="form-error" id="g-error" role="alert" hidden></div>
         <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>Batal</button>
           <button type="submit" class="btn btn-primary" id="g-save">Simpan</button></div></form>`,
@@ -52,6 +56,7 @@ export function mountSavings(el, ctx) {
     f.querySelector("#g-start").value = goal?.startDate || todayJakarta();
     f.querySelector("#g-end").value = goal?.targetDate || "";
     f.querySelector("#g-desc").value = goal?.description || "";
+    f.querySelector("#g-emerg").checked = goal?.isEmergency === true;
     bindAmountInput(f.querySelector("#g-target"));
     f.querySelector("#g-form").addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -59,7 +64,7 @@ export function mountSavings(el, ctx) {
       const btn = f.querySelector("#g-save"); setLoading(btn, true, "Menyimpan...");
       try {
         await saveGoal(ctx, { id: goal?.id, name: f.querySelector("#g-name").value, targetAmount: parseAmount(f.querySelector("#g-target").value),
-          startDate: f.querySelector("#g-start").value, targetDate: f.querySelector("#g-end").value, description: f.querySelector("#g-desc").value });
+          startDate: f.querySelector("#g-start").value, targetDate: f.querySelector("#g-end").value, description: f.querySelector("#g-desc").value, isEmergency: f.querySelector("#g-emerg").checked });
         toast("Pos tabungan disimpan.", "success"); close();
       } catch (ex) { err.textContent = ledgerErrorMessage(ex); err.hidden = false; setLoading(btn, false); }
     });

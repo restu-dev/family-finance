@@ -1,10 +1,8 @@
 import { state, subscribe, catName } from "./store.js";
 import { saveBudget, deleteBudget, copyBudgets, ledgerErrorMessage } from "./ledger.js";
-import { periodTotals, budgetStatus } from "./balance.js";
+import { periodTotals, budgetStatus, budgetLabel } from "./balance.js";
 import { openModal, confirmModal, toast, setLoading, emptyState, bindAmountInput } from "./ui.js";
 import { escapeHtml, formatRupiah, parseAmount, todayJakarta, addMonths, monthLabel, monthStart, monthEnd } from "./utils.js";
-
-const LEVEL_LABEL = { green: "Aman", yellow: "Waspada", orange: "Hampir habis", red: "Melewati batas" };
 
 export function budgetRows(monthId) {
   const t = periodTotals(state.ledger, monthStart(monthId), monthEnd(monthId));
@@ -15,7 +13,8 @@ export function budgetRows(monthId) {
 }
 
 export function warningText(r) {
-  return `Anggaran ${catName(r.categoryId)} sudah mencapai ${r.pctLabel}%. Pengeluaran ${formatRupiah(r.actual)} dari anggaran ${formatRupiah(r.limitAmount)}. ` +
+  const head = r.remaining < 0 ? `sudah melewati batas (${r.pctLabel}%)` : `sudah mencapai ${r.pctLabel}%`;
+  return `Anggaran ${catName(r.categoryId)} ${head}. Pengeluaran ${formatRupiah(r.actual)} dari anggaran ${formatRupiah(r.limitAmount)}. ` +
     (r.remaining >= 0 ? `Sisa ${formatRupiah(r.remaining)}.` : `Melebihi anggaran ${formatRupiah(-r.remaining)}.`);
 }
 
@@ -44,7 +43,7 @@ export function mountBudget(el, ctx) {
         <dt>Sisa</dt><dd>${formatRupiah(total.remaining)}</dd></div></section>
       <div class="budget-list">${rows.map((r) => `
         <section class="card budget-item" data-id="${escapeHtml(r.id)}">
-          <div class="row-between"><strong>${escapeHtml(catName(r.categoryId))}</strong><span class="pill lvl-${r.level}">${LEVEL_LABEL[r.level]}</span></div>
+          <div class="row-between"><strong>${escapeHtml(catName(r.categoryId))}</strong><span class="pill lvl-${r.level}">${budgetLabel(r)}</span></div>
           <div class="progress" role="progressbar" aria-valuenow="${Math.min(100, r.pctLabel)}" aria-valuemin="0" aria-valuemax="100">
             <span class="bar lvl-${r.level}" style="width:${Math.min(100, r.pct)}%"></span></div>
           <div class="kv small"><dt>Batas</dt><dd>${formatRupiah(r.limitAmount)}</dd><dt>Terpakai</dt><dd>${formatRupiah(r.actual)} (${r.pctLabel}%)</dd>

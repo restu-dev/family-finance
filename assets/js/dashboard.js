@@ -1,5 +1,5 @@
 import { state, subscribe, catName, personName } from "./store.js";
-import { periodTotals, mainBalanceThrough, totalSavings, topCategory, budgetStatus } from "./balance.js";
+import { periodTotals, mainBalanceThrough, totalSavings, topCategory, budgetStatus, emergencyCoverage, emergencyShort, formatMonths } from "./balance.js";
 import { budgetRows } from "./budget.js";
 import { chartHost, barConfig, lineConfig, doughnutConfig } from "./charts.js";
 import { amountCell } from "./transactions.js";
@@ -59,6 +59,7 @@ export function mountDashboard(el, ctx) {
     for (const m of monthsBetween(from.slice(0, 7), to.slice(0, 7))) for (const r of budgetRows(m)) { limit += r.limitAmount; actual += r.actual; }
     const bs = budgetStatus(limit, actual);
     const top = topCategory(t.byCategory);
+    const ec = emergencyCoverage({ entries: led, goals: state.goals, today });
     const hasOpening = led.some((e) => e.type === "opening_balance" && e.status !== "deleted");
 
     const recent = led.filter((e) => e.status !== "deleted")
@@ -89,6 +90,11 @@ export function mountDashboard(el, ctx) {
           <strong>${limit ? `${bs.pctLabel}%` : "-"}</strong>
           ${limit ? `<div class="progress"><span class="bar lvl-${bs.level}" style="width:${Math.min(100, bs.pct)}%"></span></div>
             <span class="muted small">${formatRupiah(actual)} dari ${formatRupiah(limit)}</span>` : `<span class="muted small">Atur di menu Anggaran</span>`}</section>
+      </div>
+      <div class="cards three">
+        <section class="card stat"><span class="muted">Ketahanan dana darurat</span>
+          <strong>${ec.coverage == null ? "-" : `${formatMonths(ec.coverage)} bulan`}</strong>
+          <span class="muted small">${escapeHtml(emergencyShort(ec))}</span></section>
       </div>
       <div class="chart-grid">
         <section class="card"><h2>Pemasukan dan pengeluaran</h2><div class="chart-box"><canvas id="c-flow"></canvas></div></section>

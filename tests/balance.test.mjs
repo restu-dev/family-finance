@@ -180,3 +180,63 @@ test("laporan periodik dan per kategori", () => {
   const w = buildReport(l, "mingguan", "2026-11-01", "2026-11-30", cn);
   assert.ok(w.rows.every((r) => r[0].includes(" - ")));
 });
+
+import { budgetLabel, avgMonthlyExpense, emergencyCoverage, emergencyText, emergencyShort, emergencyGuide, formatMonths } from "../assets/js/balance.js";
+
+test("label anggaran: tepat 100% berarti habis, bukan melewati batas", () => {
+  const lbl = (limit, actual) => budgetLabel(budgetStatus(limit, actual));
+  assert.equal(lbl(2000000, 1000000), "Aman");
+  assert.equal(lbl(2000000, 1500000), "Waspada");
+  assert.equal(lbl(2000000, 1800000), "Hampir habis");
+  assert.equal(lbl(2000000, 2000000), "Anggaran habis");
+  assert.equal(lbl(2000000, 2000001), "Melewati batas");
+  assert.equal(budgetStatus(2000000, 2000000).level, "red", "warna tetap merah sesuai ketentuan 100% atau lebih");
+});
+
+const mk = (type, date, amount, extra = {}) => ({ id: "x" + ++n, type, date, amount, status: "active", ...extra });
+const eg = () => [
+  mk("opening_balance", "2026-08-15", 20000000),                       // bulan mulai (sebagian), dikecualikan dari rata-rata
+  mk("expense", "2026-08-20", 100000, { categoryId: "a" }),
+  mk("expense", "2026-09-10", 2000000, { categoryId: "a" }),
+  mk("expense", "2026-10-10", 3000000, { categoryId: "a" }),
+  mk("expense", "2026-11-05", 9000000, { categoryId: "a" }),           // bulan berjalan tidak dihitung bila ada bulan penuh
+  mk("savings_deposit", "2026-10-12", 5000000, { savingsId: "dd" }),  // setoran bukan pengeluaran
+];
+const goalsEg = [{ id: "dd", name: "Dana darurat", status: "active", isEmergency: true, targetAmount: 30000000 }, { id: "ll", name: "Liburan", status: "active", targetAmount: 1 }];
+
+test("rata-rata pengeluaran: bulan pertama data dan bulan berjalan dikecualikan, tabungan bukan pengeluaran", () => {
+  const a = avgMonthlyExpense(eg(), "2026-11-24");
+  assert.deepEqual(a.months, ["2026-09", "2026-10"]);
+  assert.equal(a.avg, 2500000);
+  assert.equal(a.basis, "full");
+});
+
+test("ketahanan dana darurat: saldo pos bertanda dibagi rata-rata", () => {
+  const c = emergencyCoverage({ entries: eg(), goals: goalsEg, today: "2026-11-24" });
+  assert.equal(c.fund, 5000000);
+  assert.equal(c.coverage, 2);
+  assert.equal(c.needed3, 7500000); assert.equal(c.short3, 2500000); assert.equal(c.short6, 10000000);
+  assert.match(emergencyText(c), /cukup untuk sekitar 2 bulan pengeluaran \(rata-rata Rp2\.500\.000 per bulan\)/);
+  assert.match(emergencyText(c), /Sep 26, Okt 26/);
+  assert.match(emergencyGuide(c), /Kurang Rp2\.500\.000 untuk mencapai 3 bulan/);
+  assert.match(emergencyShort(c), /Rp2\.500\.000 per bulan/);
+});
+
+test("dana darurat: pecahan satu desimal, pos arsip tidak dihitung, tanpa tanda, tanpa data", () => {
+  assert.equal(formatMonths(2.44), "2,4"); assert.equal(formatMonths(150), "lebih dari 99");
+  const none = emergencyCoverage({ entries: eg(), goals: [goalsEg[1]], today: "2026-11-24" });
+  assert.equal(none.coverage, null);
+  assert.match(emergencyText(none), /Belum ada pos tabungan yang ditandai/);
+  const archived = emergencyCoverage({ entries: eg(), goals: [{ ...goalsEg[0], status: "archived" }], today: "2026-11-24" });
+  assert.equal(archived.flagged, 0);
+  const empty = emergencyCoverage({ entries: [], goals: goalsEg, today: "2026-11-24" });
+  assert.equal(empty.coverage, null);
+  assert.match(emergencyText(empty), /Belum cukup data pengeluaran/);
+});
+
+test("dana darurat: baru ada data bulan berjalan = perkiraan awal", () => {
+  const l = [mk("opening_balance", "2026-11-01", 5000000), mk("expense", "2026-11-10", 1000000, { categoryId: "a" }), mk("savings_deposit", "2026-11-11", 2000000, { savingsId: "dd" })];
+  const c = emergencyCoverage({ entries: l, goals: goalsEg, today: "2026-11-24" });
+  assert.equal(c.basis, "partial"); assert.equal(c.coverage, 2);
+  assert.match(emergencyText(c), /Perkiraan awal/);
+});

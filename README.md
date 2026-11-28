@@ -5,7 +5,7 @@ Stack: HTML/CSS/JavaScript ES Modules, Firebase Authentication + Cloud Firestore
 
 ## Fitur
 
-Autentikasi, keluarga dengan kode undangan (maksimal 2 anggota), pemasukan, pengeluaran, kategori bisa diatur, anggaran bulanan dengan peringatan 75/90/100% (tanpa notifikasi ganda), pos tabungan (tambah, tarik, transfer antarpos), saldo bulanan berbasis ledger, dashboard dan grafik, laporan (harian, mingguan, bulanan, tahunan, kategori) dengan ekspor CSV, riwayat transaksi, notifikasi aktivitas pasangan real-time, notifikasi push browser (opsional, butuh konfigurasi), keluar dari keluarga atau mengeluarkan pasangan, ganti nama pengguna, persetujuan akun baru oleh admin, PWA yang bisa dipasang.
+Autentikasi, keluarga dengan kode undangan (maksimal 2 anggota), pemasukan, pengeluaran, kategori bisa diatur, anggaran bulanan dengan peringatan 75/90/100% (tanpa notifikasi ganda), pos tabungan (tambah, tarik, transfer antarpos), saldo bulanan berbasis ledger, dashboard dan grafik, laporan (harian, mingguan, bulanan, tahunan, kategori) dengan ekspor CSV, riwayat transaksi, notifikasi aktivitas pasangan real-time, notifikasi push browser (opsional, butuh konfigurasi), keluar dari keluarga atau mengeluarkan pasangan, ganti nama pengguna, persetujuan akun baru oleh admin, estimasi ketahanan dana darurat, cetak laporan bulanan ke PDF, PWA yang bisa dipasang.
 
 Dokumentasi: [docs/DATABASE.md](docs/DATABASE.md) (struktur data dan rumus), [docs/TESTING.md](docs/TESTING.md) (skenario uji).
 
@@ -39,6 +39,14 @@ npm run check            # pemeriksaan impor antarmodul
 6. Buka alamat Vercel di HP Android (Chrome), pilih **Pasang aplikasi** atau menu Install.
 
 Kunci Firebase Web bukan rahasia; yang melindungi data adalah Security Rules. Jangan pernah menaruh kunci Admin SDK di repositori.
+
+## Dana darurat dan laporan PDF
+
+**Ketahanan dana darurat.** Di Tabungan, buat atau ubah sebuah pos dan centang **Tandai sebagai dana darurat**. Aplikasi membagi saldo pos itu (jika ada beberapa yang ditandai, dijumlahkan) dengan rata-rata pengeluaran bulanan, lalu menampilkan "sekitar N bulan" di Dashboard dan halaman Tabungan, beserta acuan umum 3 sampai 6 bulan pengeluaran. Cara menghitung rata-rata: sampai 3 bulan penuh terakhir; bulan pertama Anda mulai memakai aplikasi tidak dihitung karena biasanya belum penuh; setoran ke tabungan tidak dihitung sebagai pengeluaran. Jika belum ada bulan penuh, dipakai bulan berjalan dan ditandai "perkiraan awal". Ini estimasi dari riwayat Anda, bukan jaminan kebutuhan masa depan.
+
+**Cetak laporan bulanan ke PDF.** Laporan > Ringkasan > pilih bulan > **Cetak laporan PDF** > **Cetak / simpan PDF**, lalu di jendela cetak pilih **Simpan sebagai PDF** sebagai printer. Isinya: ringkasan saldo, pengeluaran dan pemasukan per kategori, anggaran dan realisasi (dengan status teks agar terbaca saat dicetak hitam putih), pos tabungan, dana darurat, analisis otomatis, dan daftar seluruh transaksi bulan itu. Grafik tidak disertakan. Laporan dihitung dari data saat dibuat, jadi mencetak ulang bulan lalu setelah ada koreksi menghasilkan angka yang sudah dikoreksi. Di Android (Chrome) pilihan Simpan sebagai PDF ada di dialog cetak; di iPhone, gunakan pratinjau cetak lalu bagikan sebagai PDF.
+
+**Status anggaran.** Tepat 100% ditampilkan sebagai **Anggaran habis** (belum melewati batas). Label **Melewati batas** baru muncul bila pengeluaran lebih dari anggaran. Warna merah tetap mulai dari 100%, sesuai ketentuan awal.
 
 ## Persetujuan akun baru oleh pemilik aplikasi (admin)
 

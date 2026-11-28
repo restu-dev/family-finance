@@ -223,7 +223,8 @@ export async function checkBudgetAlerts(ctx, monthId, categoryId, override = nul
   const st = budgetStatus(b.limitAmount, actual);
   const suffix = monthId === todayJakarta().slice(0, 7) ? "" : ` (${monthLabel(monthId)})`;
   const rest = st.remaining >= 0 ? `Sisa ${formatRupiah(st.remaining)}.` : `Melebihi anggaran ${formatRupiah(-st.remaining)}.`;
-  const message = `Anggaran ${catName(categoryId)}${suffix} sudah mencapai ${t}%. Pengeluaran ${formatRupiah(actual)} dari anggaran ${formatRupiah(b.limitAmount)}. ${rest}`;
+  const head = st.remaining < 0 ? "sudah melewati batas" : `sudah mencapai ${t}%`; // tepat 100% = habis, belum melewati
+  const message = `Anggaran ${catName(categoryId)}${suffix} ${head}. Pengeluaran ${formatRupiah(actual)} dari anggaran ${formatRupiah(b.limitAmount)}. ${rest}`;
   const batch = writeBatch(db);
   batch.set(doc(col(ctx, "budgetAlerts"), alertKey(categoryId, monthId, t)), {
     categoryId, monthId, threshold: t, createdBy: ctx.user.uid, createdAt: serverTimestamp(),
@@ -259,7 +260,7 @@ export async function maybeAchieve(ctx, goalId) {
 }
 
 // ---------- Pos tabungan ----------
-export async function saveGoal(ctx, { id = null, name, targetAmount, startDate, targetDate, description }) {
+export async function saveGoal(ctx, { id = null, name, targetAmount, startDate, targetDate, description, isEmergency = false }) {
   requireOnline();
   const n = cleanText(name, 60);
   if (!n) throw new LedgerError("Nama pos tabungan wajib diisi.");
@@ -267,7 +268,7 @@ export async function saveGoal(ctx, { id = null, name, targetAmount, startDate, 
   if (!isValidDateStr(startDate)) throw new LedgerError("Tanggal mulai tidak valid.");
   if (targetDate && !isValidDateStr(targetDate)) throw new LedgerError("Tanggal target tidak valid.");
   if (targetDate && targetDate < startDate) throw new LedgerError("Tanggal target tidak boleh sebelum tanggal mulai.");
-  const fields = { name: n, targetAmount, startDate, targetDate: targetDate || "", description: cleanText(description || "", 300) };
+  const fields = { name: n, targetAmount, startDate, targetDate: targetDate || "", description: cleanText(description || "", 300), isEmergency: !!isEmergency };
   const batch = writeBatch(db);
   if (id) {
     batch.update(doc(col(ctx, "savingsGoals"), id), { ...fields, updatedAt: serverTimestamp() });
